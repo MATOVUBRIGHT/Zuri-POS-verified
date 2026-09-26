@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Currency Convert Test</title></head>
+  <body>
+    <h3>Currency convertAndRound test</h3>
+    <pre id="out">Running...</pre>
+    <script type="module">
+      (async () => {
+        try {
+          const mod = await import('/src/lib/currency.ts');
+          const a = 5000;
+          const f = 0.00027; // example factor
+          const b = mod.convertAndRound(a, f, 'USD');
+          const c = mod.convertAndRound(b, 1/f, 'UGX');
+          const formattedUGX = mod.fmtCurrency(c);
+          document.getElementById('out').textContent = JSON.stringify({ a, b, c, formattedUGX }, null, 2);
+        } catch (err) {
+          document.getElementById('out').textContent = 'ERROR: ' + String(err);
+        }
+      })();
+    </script>
+  </body>
+</html>

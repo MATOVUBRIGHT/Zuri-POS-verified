@@ -1,0 +1,27 @@
+project_id = "caiewktqohluikdlgibw"
+
+[functions.verify-staff-pin]
+verify_jwt = false
+
+[functions.lookup-barcode]
+verify_jwt = false
+
+[functions.search-products]
+verify_jwt = false
+
+[functions.hash-pin]
+verify_jwt = false
+
+# These endpoints deliberately support the public branch username/password sign-in
+# flow. The functions perform their own credential and branch-assignment checks.
+[functions.branch-login-directory]
+verify_jwt = false
+
+[functions.branch-login]
+verify_jwt = false
+
+[functions.notify-subscription]
+verify_jwt = false
+
+[functions.notify-pending]
+verify_jwt = false

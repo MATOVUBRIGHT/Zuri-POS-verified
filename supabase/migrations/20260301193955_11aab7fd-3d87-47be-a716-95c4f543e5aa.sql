@@ -1,0 +1,1 @@
+ALTER TABLE public.stores ADD COLUMN IF NOT EXISTS last_closing_balance numeric DEFAULT 0;

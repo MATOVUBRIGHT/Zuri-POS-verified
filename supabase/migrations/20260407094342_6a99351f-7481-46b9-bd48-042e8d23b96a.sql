@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS idx_suppliers_store_name ON public.suppliers (store_id, lower(name));
