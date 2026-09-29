@@ -45,6 +45,11 @@ CREATE INDEX IF NOT EXISTS idx_sales_returns_refund_status ON public.sales_retur
 -- Enable RLS on sales_returns
 ALTER TABLE public.sales_returns ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view returns for their stores" ON public.sales_returns;
+DROP POLICY IF EXISTS "Users can insert returns for their stores" ON public.sales_returns;
+DROP POLICY IF EXISTS "Users can update returns for their stores" ON public.sales_returns;
+DROP POLICY IF EXISTS "Users can delete returns for their stores" ON public.sales_returns;
+
 -- Policy: Users can view returns for stores they own or have access to
 CREATE POLICY "Users can view returns for their stores" ON public.sales_returns
   FOR SELECT USING (
@@ -107,6 +112,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Create trigger for sales_returns updated_at
+DROP TRIGGER IF EXISTS update_sales_returns_updated_at ON public.sales_returns;
 CREATE TRIGGER update_sales_returns_updated_at
   BEFORE UPDATE ON public.sales_returns
   FOR EACH ROW

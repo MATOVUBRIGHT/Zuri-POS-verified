@@ -10,6 +10,7 @@ AS $$
 $$;
 
 -- Also ensure hash_pin function exists for creating new PINs
+DROP FUNCTION IF EXISTS public.hash_pin(text);
 CREATE OR REPLACE FUNCTION public.hash_pin(pin_input text)
 RETURNS text
 LANGUAGE sql STABLE SECURITY DEFINER

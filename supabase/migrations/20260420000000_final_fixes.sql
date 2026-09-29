@@ -41,6 +41,7 @@ ALTER TABLE IF EXISTS public.staff ADD COLUMN IF NOT EXISTS user_id UUID REFEREN
 ALTER TABLE IF EXISTS public.staff ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- ── VERIFY_PIN_HASH function (for local PIN verification) ─────────────────
+DROP FUNCTION IF EXISTS public.verify_pin_hash(text, text);
 CREATE OR REPLACE FUNCTION public.verify_pin_hash(_pin_input text, _hash text)
 RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER
