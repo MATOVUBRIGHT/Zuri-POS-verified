@@ -1,4 +1,4 @@
-project_id = "caiewktqohluikdlgibw"
+project_id = "itvordesxygnktqchqgs"
 
 [functions.verify-staff-pin]
 verify_jwt = false

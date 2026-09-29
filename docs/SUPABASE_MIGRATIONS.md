@@ -10,7 +10,7 @@ Project ref is set in `supabase/config.toml` as `project_id`.
 
 ```bash
 cd "Zuri POS Desktop App"
-supabase link --project-ref bsjbrbofjlupnwqcwsfn
+supabase link --project-ref itvordesxygnktqchqgs
 supabase db push
 ```
 
@@ -20,7 +20,7 @@ If a migration fails, read the error in the terminal, fix the SQL or baseline th
 
 ## Option B — SQL Editor (manual)
 
-1. Open **Supabase Dashboard → SQL Editor** for project `bsjbrbofjlupnwqcwsfn`.
+1. Open **Supabase Dashboard → SQL Editor** for project `itvordesxygnktqchqgs`.
 2. Run each file under `supabase/migrations/` **in chronological order** (by the `YYYYMMDDHHMMSS_name.sql` prefix).
 3. Skip or adjust any migration that references objects already created.
 
