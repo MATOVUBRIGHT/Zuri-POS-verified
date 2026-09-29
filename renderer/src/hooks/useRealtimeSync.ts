@@ -17,9 +17,27 @@ const WATCHED_TABLES = [
 export function useRealtimeSync(storeId: string | null) {
   const queryClient = useQueryClient();
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!storeId) return;
+
+    let mounted = true;
+
+    const startPolling = () => {
+      if (pollRef.current !== null) return;
+      pollRef.current = window.setInterval(() => {
+        WATCHED_TABLES.forEach((table) => {
+          queryClient.refetchQueries({ queryKey: [table, storeId] });
+        });
+      }, 15_000);
+    };
+
+    const stopPolling = () => {
+      if (pollRef.current === null) return;
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    };
 
     // Clean up previous channel
     if (channelRef.current) {
@@ -47,14 +65,32 @@ export function useRealtimeSync(storeId: string | null) {
       );
     });
 
-    channel.subscribe();
+    try {
+      channel.subscribe((status) => {
+        if (!mounted) return;
+        if (status === "SUBSCRIBED") {
+          stopPolling();
+          return;
+        }
+        // CLOSED is normal teardown — only poll on genuine errors
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn("[realtime] Disabled; falling back to polling.", { storeId, status });
+          startPolling();
+        }
+      });
+    } catch (e) {
+      console.warn("[realtime] Subscribe threw; falling back to polling.", e);
+      startPolling();
+    }
     channelRef.current = channel;
 
     return () => {
+      mounted = false;
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
+      stopPolling();
     };
   }, [storeId, queryClient]);
 }

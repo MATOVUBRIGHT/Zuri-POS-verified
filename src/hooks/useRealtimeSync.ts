@@ -12,6 +12,8 @@ export function useRealtimeSync(storeId: string | null) {
   useEffect(() => {
     if (!storeId) return;
 
+    let mounted = true;
+
     const startPolling = () => {
       if (pollRef.current !== null) return;
       // Realtime is best-effort; polling keeps the app usable on weak networks / WS-blocked ISPs.
@@ -19,7 +21,7 @@ export function useRealtimeSync(storeId: string | null) {
         WATCHED_TABLES.forEach((table) => {
           queryClient.refetchQueries({ queryKey: [table, storeId] });
         });
-      }, 5000);
+      }, 15_000); // 15s — less aggressive than 5s, avoids hammering the API
     };
 
     const stopPolling = () => {
@@ -56,12 +58,17 @@ export function useRealtimeSync(storeId: string | null) {
 
     try {
       channel.subscribe((status) => {
+        // Ignore callbacks after cleanup — prevents poll restarts on unmount
+        if (!mounted) return;
+
         if (status === "SUBSCRIBED") {
           stopPolling();
           return;
         }
 
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        // CLOSED is a normal teardown status (emitted on removeChannel), not an error.
+        // Only fall back to polling on genuine connection failures.
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           console.warn("[realtime] Disabled; falling back to polling.", { storeId, status });
           startPolling();
         }
@@ -73,6 +80,7 @@ export function useRealtimeSync(storeId: string | null) {
     channelRef.current = channel;
 
     return () => {
+      mounted = false;
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;

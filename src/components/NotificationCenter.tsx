@@ -33,6 +33,9 @@ const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenter
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   useEffect(() => {
+    // Wait for the store context before doing anything — avoids store_id=eq.undefined 400s
+    if (!currentStoreId) return;
+
     fetchNotifications();
     const cleanupRealtime = setupRealtimeSubscription();
     checkForAlerts();
@@ -178,6 +181,9 @@ const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenter
   };
 
   const fetchNotifications = async () => {
+    // Don't query until we have a valid store context — prevents store_id=eq.undefined 400s
+    if (!currentStoreId) return;
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -277,6 +283,7 @@ const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenter
   };
 
   const markAllAsRead = async () => {
+    if (!currentStoreId) return;
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;

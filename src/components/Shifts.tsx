@@ -88,11 +88,11 @@ const Shifts = ({ onRefresh, onStaffLogin, onStaffLogout }: ShiftsProps) => {
     if (!storeId) return;
     const { data, error } = await supabase.from("shifts")
       .select("*, staff:staff_id(full_name)")
-      .eq("store_id", storeId).order("created_at", { ascending: false }).limit(20);
+      .eq("store_id", storeId).order("start_time", { ascending: false }).limit(20);
     if (!error) setShiftHistory((data as unknown as Shift[]) || []);
     else {
       const { data: d2 } = await supabase.from("shifts").select("*")
-        .eq("store_id", storeId).order("created_at", { ascending: false }).limit(20);
+        .eq("store_id", storeId).order("start_time", { ascending: false }).limit(20);
       setShiftHistory((d2 as unknown as Shift[]) || []);
     }
   };

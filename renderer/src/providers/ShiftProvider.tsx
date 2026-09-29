@@ -156,10 +156,18 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           .select('*')
           .eq('store_id', currentStoreId)
           .eq('status', 'open')
-          .order('created_at', { ascending: false })
+          .order('start_time', { ascending: false })
           .limit(1);
 
-        if (error) throw error;
+        if (error) {
+          // Log the real error message, not just the object
+          console.error("Error fetching shift data:", error.message, error.details, error.hint);
+          // Fall back to cache gracefully instead of crashing
+          const cachedShift = localStorage.getItem('brec_offline_shift');
+          if (cachedShift) setActiveShift(JSON.parse(cachedShift));
+          return;
+        }
+
         const shift = (shifts && shifts.length > 0) ? shifts[0] : null;
         setActiveShift(shift as Shift | null);
         
@@ -177,7 +185,8 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         } catch(e) {}
       }
     } catch (error) {
-      console.error("Error fetching shift data:", error);
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error("Error fetching shift data:", msg, error);
     } finally {
       setLoading(false);
     }

@@ -99,17 +99,27 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         .select('*')
         .eq('store_id', storeId)
         .eq('status', 'open')
-        .order('created_at', { ascending: false })
+        .order('start_time', { ascending: false })
         .limit(1);
 
-      if (error) throw error;
+      if (error) {
+        // Surface the real Supabase error message instead of just logging the object
+        console.error("Error fetching shift data:", error.message, error.details, error.hint);
+        // Fall back to cache rather than throwing — a 400 here shouldn't crash the app
+        const cachedShift = loadShiftCache()?.activeShift ?? null;
+        setActiveShift(cachedShift as Shift | null);
+        saveShiftCache({ user, store: resolvedStore, activeShift: cachedShift, isAdmin: adminStatus });
+        return;
+      }
+
       const resolvedShift = (shifts && shifts.length > 0 ? shifts[0] : null) as Shift | null;
       setActiveShift(resolvedShift);
 
       // Persist to localStorage for instant hydration on next load
       saveShiftCache({ user, store: resolvedStore, activeShift: resolvedShift, isAdmin: adminStatus });
     } catch (error) {
-      console.error("Error fetching shift data:", error);
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error("Error fetching shift data:", msg, error);
     } finally {
       setLoading(false);
     }

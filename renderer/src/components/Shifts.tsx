@@ -117,7 +117,7 @@ const Shifts = ({ onUpdateCash, onRefresh, onStaffLogin, onStaffLogout }: Shifts
                 .from('shifts')
                 .select('*, staff:staff_id(full_name)')
                 .eq('store_id', storeId)
-                .order('created_at', { ascending: false })
+                .order('start_time', { ascending: false })
                 .limit(10);
 
             if (res.error && isSchemaMismatch(res.error)) {
@@ -125,7 +125,7 @@ const Shifts = ({ onUpdateCash, onRefresh, onStaffLogin, onStaffLogout }: Shifts
                     .from('shifts')
                     .select('*')
                     .eq('store_id', storeId)
-                    .order('created_at', { ascending: false })
+                    .order('start_time', { ascending: false })
                     .limit(10);
                 setShiftHistory((retry.data as unknown as Shift[]) || []);
             } else {
