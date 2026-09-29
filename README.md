@@ -1,4 +1,4 @@
-# brepos POS
+# Zuri-POS-verified
 
 Web-based POS and inventory system (React + Vite + Supabase) with barcode/label printing, stock entry, sales entry, suppliers/payables, staff, and admin tools.
 
