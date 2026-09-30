@@ -13,6 +13,11 @@ interface PendingPayload {
   created_at?: string | null;
 }
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-subscription-notify-secret",
+};
+
 const RECIPIENTS = [
   "brightadmin77@gmail.com",
   "brightmatovu7@gmail.com",
@@ -86,22 +91,39 @@ function buildContent(p: PendingPayload) {
 }
 
 Deno.serve(async (req: Request) => {
+  // Handle CORS preflight — required when invoked from browsers or Supabase webhooks
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   try {
     const payload = (await req.json()) as PendingPayload | null;
     if (!payload || !payload.subscription_id) {
-      return new Response(JSON.stringify({ error: "Invalid payload: subscription_id is required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: "Invalid payload: subscription_id is required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const { subject, text, html } = buildContent(payload);
     const result = await sendWithResend(subject, html, text);
 
-    return new Response(JSON.stringify({ ok: true, result }), { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, result }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (err) {
     console.error("[notify-pending] failure:", err);
-    return new Response(JSON.stringify({ ok: false, error: String(err && (err as Error).message || err) }), { status: 500, headers: { "Content-Type": "application/json" } });
+    return new Response(
+      JSON.stringify({ ok: false, error: String(err && (err as Error).message || err) }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 });

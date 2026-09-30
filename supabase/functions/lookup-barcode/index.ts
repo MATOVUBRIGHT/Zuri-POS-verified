@@ -37,8 +37,10 @@ Deno.serve(async (req) => {
 
     const { barcode } = await req.json();
 
-    // Input validation: barcode should be alphanumeric, max 20 chars
-    if (!barcode || typeof barcode !== 'string' || barcode.length > 20 || !/^[a-zA-Z0-9]+$/.test(barcode)) {
+    // Input validation: barcodes can include digits, letters, hyphens and dashes
+    // (EAN-13, UPC-A are numeric; GS1-128, Code-39 allow alphanumeric + hyphens).
+    // Max 50 chars covers all standard barcode symbologies.
+    if (!barcode || typeof barcode !== 'string' || barcode.length > 50 || !/^[a-zA-Z0-9\-]+$/.test(barcode)) {
       return new Response(
         JSON.stringify({ success: false, error: 'Invalid barcode format' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

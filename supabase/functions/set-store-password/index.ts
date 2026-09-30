@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
+import bcrypt from "https://esm.sh/bcryptjs@2.4.3";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
 
     // password = null/empty means remove the password
     const hash = password && password.trim()
-      ? await bcrypt.hash(password.trim())
+      ? bcrypt.hashSync(password.trim(), 10)
       : null;
 
     const { error: updateError } = await adminClient

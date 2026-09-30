@@ -40,7 +40,8 @@ Deno.serve(async (req) => {
 
     const admin = createClient(url, serviceKey);
     const { data: ownedStore } = await admin.from("stores").select("id").eq("id", storeId).eq("user_id", caller.id).maybeSingle();
-    if (!ownedStore) return response({ error: "You can only manage staff for branches you own." }, 403);
+    const { data: accessRecord } = await admin.from("store_access").select("role").eq("store_id", storeId).eq("user_id", caller.id).maybeSingle();
+    if (!ownedStore && !accessRecord) return response({ error: "You can only manage staff for branches you own or have access to." }, 403);
 
     if (action === "deactivate") {
       if (typeof body.staff_id !== "string") return response({ error: "Staff member is required." }, 400);

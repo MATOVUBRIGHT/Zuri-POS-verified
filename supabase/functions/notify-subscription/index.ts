@@ -14,12 +14,11 @@ interface DbWebhookBody {
   old_record?: Record<string, unknown> | null;
 }
 
-const DEFAULT_EMAILS = "brightmatovu7@gmail.com";
-const DEFAULT_SMS_TO = "+256756162969";
-
 const FROM_EMAIL = Deno.env.get("NOTIFY_FROM_EMAIL") || "Zuri POS <no-reply@example.com>";
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
-const EMAIL_RECIPIENTS = (Deno.env.get("NOTIFY_SUBSCRIPTION_EMAILS") || DEFAULT_EMAILS)
+// Recipients come from env only — no hardcoded fallback so production addresses
+// are never baked into source code. Set NOTIFY_SUBSCRIPTION_EMAILS in Supabase secrets.
+const EMAIL_RECIPIENTS = (Deno.env.get("NOTIFY_SUBSCRIPTION_EMAILS") || "")
   .split(",")
   .map((s: string) => s.trim())
   .filter(Boolean);
@@ -29,7 +28,9 @@ const NOTIFY_SECRET = Deno.env.get("SUBSCRIPTION_NOTIFY_SECRET");
 const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
 const TWILIO_FROM = Deno.env.get("TWILIO_FROM_NUMBER");
-const SMS_TO = Deno.env.get("NOTIFY_SUBSCRIPTION_SMS_TO") || DEFAULT_SMS_TO;
+// SMS recipient comes from env only — no hardcoded fallback.
+// Set NOTIFY_SUBSCRIPTION_SMS_TO in Supabase secrets.
+const SMS_TO = Deno.env.get("NOTIFY_SUBSCRIPTION_SMS_TO") || "";
 
 function unauthorized() {
   return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -71,6 +72,10 @@ async function sendEmail(subject: string, html: string, text: string) {
     console.log("[notify-subscription] RESEND_API_KEY missing — skip email");
     return { skipped: true as const, channel: "email" };
   }
+  if (EMAIL_RECIPIENTS.length === 0) {
+    console.log("[notify-subscription] NOTIFY_SUBSCRIPTION_EMAILS not set — skip email");
+    return { skipped: true as const, channel: "email" };
+  }
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -95,6 +100,10 @@ async function sendEmail(subject: string, html: string, text: string) {
 async function sendSms(body: string) {
   if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) {
     console.log("[notify-subscription] Twilio env missing — skip SMS");
+    return { skipped: true as const, channel: "sms" };
+  }
+  if (!SMS_TO) {
+    console.log("[notify-subscription] NOTIFY_SUBSCRIPTION_SMS_TO not set — skip SMS");
     return { skipped: true as const, channel: "sms" };
   }
   const auth = btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`);

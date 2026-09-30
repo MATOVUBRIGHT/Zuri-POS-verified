@@ -1,5 +1,10 @@
 {
   "compilerOptions": {
     "lib": ["deno.window"]
+  },
+  "imports": {
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.49.1",
+    "bcryptjs": "https://esm.sh/bcryptjs@2.4.3",
+    "@supabase/functions-js/edge-runtime.d.ts": "jsr:@supabase/functions-js/edge-runtime.d.ts"
   }
 }
