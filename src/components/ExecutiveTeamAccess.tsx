@@ -32,30 +32,35 @@ export default function ExecutiveTeamAccess({ userId }: { userId: string | null 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!branchId || !form.full_name.trim() || !form.role) return;
-    if (!editing && (!form.username.trim() || form.password.length < 8)) {
-      return toast({ title: "Complete the login details", description: "A username and password of at least 8 characters are required.", variant: "destructive" });
+    // Create: username + password required
+    if (!editing) {
+      if (!form.username.trim()) {
+        return toast({ title: "Username required", description: "Enter a login username for this branch user.", variant: "destructive" });
+      }
+      if (form.password.length < 8) {
+        return toast({ title: "Password too short", description: "Password must be at least 8 characters.", variant: "destructive" });
+      }
     }
     setSaving(true);
     try {
-      // Both create and edit go through the edge function so auth.users metadata
-      // and store_access role are always kept in sync with the staff record.
-      const { data, error } = await supabase.functions.invoke("provision-branch-user", {
-        body: {
-          store_id: branchId,
-          full_name: form.full_name.trim(),
-          username: form.username.trim().toLowerCase(),
-          password: form.password || undefined,
-          role: form.role,
-          allowed_pages: form.allowed_pages,
-          ...(editing ? { staff_id: editing.id } : {}),
-        },
-      });
+      const body: Record<string, unknown> = {
+        store_id: branchId,
+        full_name: form.full_name.trim(),
+        role: form.role,
+        allowed_pages: form.allowed_pages,
+      };
+      // Always send username — required for create, used to update auth email on edit
+      if (form.username.trim()) body.username = form.username.trim().toLowerCase();
+      // Only send password when the user actually typed one
+      if (form.password) body.password = form.password;
+      // Send staff_id on edit so the function updates instead of creating a new user
+      if (editing) body.staff_id = editing.id;
+
+      const { data, error } = await supabase.functions.invoke("provision-branch-user", { body });
       if (error || data?.error) throw new Error(data?.error || error?.message || "Could not save branch user");
       toast({
         title: editing ? "User updated" : "User created",
-        description: editing
-          ? `${form.full_name} has been updated.`
-          : `${form.full_name} can now sign in to ${branch?.store_name}.`,
+        description: editing ? `${form.full_name} has been updated.` : `${form.full_name} can now sign in to ${branch?.store_name}.`,
       });
       setOpen(false);
       setEditing(null);

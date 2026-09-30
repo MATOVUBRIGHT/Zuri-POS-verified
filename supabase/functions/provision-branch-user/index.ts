@@ -63,7 +63,14 @@ Deno.serve(async (req) => {
     const password = String(body.password || "");
     const role = String(body.role || "cashier").toLowerCase();
     const allowedPages = Array.isArray(body.allowed_pages) ? body.allowed_pages.filter((page) => typeof page === "string" && branchAssignablePages.has(page)) : [];
-    if (!fullName || !usernamePattern.test(username) || !allowedRoles.has(role)) return response({ error: "Enter a name, a valid username, and a valid role." }, 400);
+
+    // On edits (staff_id supplied) username may be omitted — we'll keep the existing value.
+    // On creates it is required and must match the pattern.
+    const isEdit = Boolean(body.staff_id);
+    if (!fullName) return response({ error: "Enter the staff member's full name." }, 400);
+    if (!isEdit && !usernamePattern.test(username)) return response({ error: "Username must be 3–50 characters and contain only letters, numbers, dots, underscores or hyphens." }, 400);
+    if (isEdit && username && !usernamePattern.test(username)) return response({ error: "Username must be 3–50 characters and contain only letters, numbers, dots, underscores or hyphens." }, 400);
+    if (!allowedRoles.has(role)) return response({ error: "Choose a valid role: cashier, manager, accountant or admin." }, 400);
     if (password && password.length < 8) return response({ error: "Password must be at least 8 characters." }, 400);
 
     let staff = null;
@@ -74,20 +81,39 @@ Deno.serve(async (req) => {
     }
     if (!staff && !password) return response({ error: "Set a password when creating a new branch login." }, 400);
 
-    const authEmail = `${username}.${storeId.replaceAll("-", "")}@branch.zuripos.local`;
+    const authEmail = username ? `${username}.${storeId.replaceAll("-", "")}@branch.zuripos.local` : null;
     let authUserId = staff?.user_id || null;
     if (authUserId) {
-      const update = { email: authEmail, user_metadata: { full_name: fullName, branch_id: storeId, branch_role: role } };
+      // Update existing auth user — only change email if we have a username
+      const update: Record<string, unknown> = {
+        user_metadata: { full_name: fullName, branch_id: storeId, branch_role: role },
+      };
+      if (authEmail) update.email = authEmail;
       if (password) update.password = password;
       const { error } = await admin.auth.admin.updateUserById(authUserId, update);
       if (error) return response({ error: error.message || "Could not update the login account." }, 400);
     } else {
+      if (!authEmail) return response({ error: "Username is required when creating a new branch login." }, 400);
       const { data, error } = await admin.auth.admin.createUser({ email: authEmail, password, email_confirm: true, user_metadata: { full_name: fullName, branch_id: storeId, branch_role: role } });
       if (error || !data.user) return response({ error: error?.message || "Could not create the login account." }, 400);
       authUserId = data.user.id;
     }
 
-    const payload = { store_id: storeId, user_id: authUserId, full_name: fullName, employee_id: username, login_username: username, auth_email: authEmail, role, allowed_pages: allowedPages, status: "active", updated_at: new Date().toISOString() };
+    const payload: Record<string, unknown> = {
+      store_id: storeId,
+      user_id: authUserId,
+      full_name: fullName,
+      role,
+      allowed_pages: allowedPages,
+      status: "active",
+      updated_at: new Date().toISOString(),
+    };
+    // Only write username-derived fields when we have a username
+    if (username) {
+      payload.employee_id = username;
+      payload.login_username = username;
+      payload.auth_email = authEmail;
+    }
     const result = staff
       ? await admin.from("staff").update(payload).eq("id", staff.id).select("id").single()
       : await admin.from("staff").insert(payload).select("id").single();
