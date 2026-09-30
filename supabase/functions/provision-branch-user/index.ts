@@ -13,10 +13,16 @@ const response = (body: Record<string, unknown>, status = 200) => new Response(J
 
 const usernamePattern = /^[a-z0-9][a-z0-9._-]{2,48}$/i;
 const allowedRoles = new Set(["cashier", "manager", "admin", "accountant"]);
-// Keep this server allow-list aligned with src/lib/posPageRegistry.ts. Store,
-// security, settings and executive/platform pages must never be grantable to a
-// direct branch login, even if a caller crafts an Edge Function request.
-const branchAssignablePages = new Set(["dashboard", "products", "suppliers", "stock-entry", "sales-entry", "inventory", "barcode-manager", "customers", "expenses", "accounts", "returns", "staff", "shifts", "reports", "cash-sales-report"]);
+// Keep this server allow-list in sync with src/lib/posPageRegistry.ts (branchAssignable: true entries).
+// Store, security, settings and executive/platform pages must never be grantable to a
+// direct branch login, even if a caller crafts a custom Edge Function request.
+const branchAssignablePages = new Set([
+  "dashboard", "products", "suppliers", "supplier-reports",
+  "stock-entry", "sales-entry", "cash-sales-report",
+  "inventory", "barcode-manager", "customers", "expenses",
+  "accounts", "banking", "scheduled-payments", "tracker",
+  "returns", "staff", "shifts", "reports",
+]);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
