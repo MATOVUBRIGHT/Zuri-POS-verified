@@ -11,11 +11,27 @@ ALTER TABLE public.staff
   ADD COLUMN IF NOT EXISTS auth_email      TEXT,
   ADD COLUMN IF NOT EXISTS employee_id     TEXT,
   ADD COLUMN IF NOT EXISTS user_id         UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS allowed_pages   JSONB DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS status          TEXT DEFAULT 'active',
   ADD COLUMN IF NOT EXISTS pin_hash        TEXT,
   ADD COLUMN IF NOT EXISTS pin_code        TEXT,
   ADD COLUMN IF NOT EXISTS updated_at      TIMESTAMPTZ DEFAULT NOW();
+
+-- Fix allowed_pages: some old migrations created it as staff[] instead of JSONB.
+-- Drop and recreate to guarantee the correct type.
+DO $$
+BEGIN
+  -- Check if it exists with the wrong type
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'staff'
+      AND column_name = 'allowed_pages'
+      AND data_type != 'jsonb'
+  ) THEN
+    ALTER TABLE public.staff DROP COLUMN allowed_pages;
+  END IF;
+END $$;
+ALTER TABLE public.staff ADD COLUMN IF NOT EXISTS allowed_pages JSONB DEFAULT '[]'::jsonb;
 
 -- Unique login per branch (case-insensitive username per store)
 CREATE UNIQUE INDEX IF NOT EXISTS staff_store_login_username_unique
