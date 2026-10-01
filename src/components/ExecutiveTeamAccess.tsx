@@ -74,9 +74,6 @@ export default function ExecutiveTeamAccess({ userId }: { userId: string | null 
       });
 
       const rawText = await rawResp.text();
-      console.log("[provision-branch-user] status:", rawResp.status);
-      console.log("[provision-branch-user] raw response:", rawText);
-
       let respData: any = null;
       try { respData = JSON.parse(rawText); } catch {}
 

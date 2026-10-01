@@ -45,8 +45,7 @@ Deno.serve(async (req) => {
     const admin = createClient(url, serviceKey);
     const { data: ownedStore } = await admin.from("stores").select("id").eq("id", storeId).eq("user_id", caller.id).maybeSingle();
     const { data: accessRecord } = await admin.from("store_access").select("role").eq("store_id", storeId).eq("user_id", caller.id).maybeSingle();
-    console.log("[provision-branch-user] caller:", caller.id, "storeId:", storeId, "owned:", !!ownedStore, "access:", !!accessRecord);
-    if (!ownedStore && !accessRecord) return response({ error: "You can only manage staff for branches you own or have access to." }, 403);
+    console.log("[provision-branch-user] caller:", caller.id, "storeId:", storeId, "owned:", !!ownedStore, "access:", !!accessRecord);    if (!ownedStore && !accessRecord) return response({ error: "You can only manage staff for branches you own or have access to." }, 403);
 
     if (action === "deactivate") {
       if (typeof body.staff_id !== "string") return response({ error: "Staff member is required." }, 400);
@@ -142,8 +141,6 @@ Deno.serve(async (req) => {
       payload.login_username = username;
       payload.auth_email = authEmail;
     }
-
-    console.log("[provision-branch-user] writing staff payload, allowed_pages type:", typeof payload.allowed_pages, "value:", payload.allowed_pages);
 
     const result = staffRow
       ? await admin.from("staff").update(payload).eq("id", staffRow.id).select("id").single()
