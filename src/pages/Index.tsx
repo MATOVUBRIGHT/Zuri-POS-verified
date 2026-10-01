@@ -30,7 +30,7 @@ import BankCash from "@/components/BankCash";
 import ScheduledPayments from "@/components/ScheduledPayments";
 import ExecutiveExpenses from "@/components/ExecutiveExpenses";
 import Tracker from "@/components/Tracker";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { StockItem, SaleItem, ExpenseItem, Product, Category, Staff } from "@/types";
 
@@ -1213,12 +1213,13 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
     return staffAllowedPages[0] || "sales-entry";
   }, [activeStaff, hasExecutivePosAccess, isAdmin, userRole, currentPage, posStoreId, staffAllowedPages]);
 
-  // Sync if page was redirected
+  // Sync if page was redirected by the allowed-pages guard
   useEffect(() => {
     if (effectivePage !== currentPage) {
       setCurrentPage(effectivePage);
     }
-  }, [effectivePage, currentPage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectivePage]);
 
   // Removed full-screen loading guard – open instantly
 
@@ -1347,6 +1348,10 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
       {/* Cash Management Popup */}
       <Dialog open={showCashPopup} onOpenChange={setShowCashPopup}>
         <DialogContent className="max-w-2xl p-0 overflow-y-auto overscroll-contain border-none bg-transparent">
+          <DialogTitle className="sr-only">Cash management</DialogTitle>
+          <DialogDescription className="sr-only">
+            Review and manage this branch's cash transactions.
+          </DialogDescription>
           <CashManagement
             availableCash={availableCash}
             storeId={currentStoreId ?? undefined}
