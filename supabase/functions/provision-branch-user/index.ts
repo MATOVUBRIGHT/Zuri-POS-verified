@@ -39,7 +39,8 @@ Deno.serve(async (req) => {
     const { data: { user: caller } } = await callerClient.auth.getUser();
     if (!caller) return response({ error: "Your executive session has expired. Please sign in again." }, 401);
 
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body) return response({ error: "Invalid JSON in request body." }, 400);
     const action = body.action || "upsert";
     const storeId = typeof body.store_id === "string" ? body.store_id : "";
     if (!storeId) return response({ error: "Choose a branch before saving a team member." }, 400);
@@ -96,28 +97,44 @@ Deno.serve(async (req) => {
     } else {
       if (!authEmail) return response({ error: "Username is required when creating a new branch login." }, 400);
 
-      // Check if an auth user with this email already exists (e.g. from a previous
-      // failed attempt) — reuse it rather than failing with "already exists".
-      let existingAuthUserId: string | null = null;
-      try {
-        const { data: listData } = await admin.auth.admin.listUsers({ perPage: 1000 });
-        const found = listData?.users?.find((u: any) => u.email === authEmail);
-        if (found) existingAuthUserId = found.id;
-      } catch {}
+      // Try to create the auth user. If the email already exists (orphaned from a
+      // previous failed attempt), look up and reuse that user instead.
+      const { data: createData, error: createError } = await admin.auth.admin.createUser({
+        email: authEmail,
+        password,
+        email_confirm: true,
+        user_metadata: { full_name: fullName, branch_id: storeId, branch_role: role },
+      });
 
-      if (existingAuthUserId) {
-        // Update the existing orphaned auth user
-        const update: Record<string, unknown> = {
+      if (createError) {
+        // "User already registered" or "Email already taken" — look up by email
+        const isAlreadyExists =
+          createError.message?.toLowerCase().includes("already") ||
+          createError.message?.toLowerCase().includes("exists") ||
+          createError.status === 422;
+
+        if (!isAlreadyExists) {
+          return response({ error: createError.message || "Could not create the login account." }, 400);
+        }
+
+        // Find the existing auth user by email via admin list
+        const { data: listData, error: listError } = await admin.auth.admin.listUsers({ perPage: 1000 });
+        if (listError) return response({ error: "Could not look up existing user: " + listError.message }, 400);
+
+        const found = (listData?.users || []).find((u: any) => u.email === authEmail);
+        if (!found) return response({ error: "User already exists but could not be retrieved. Contact support." }, 400);
+
+        // Update the orphaned user with the new credentials
+        const updatePayload: Record<string, unknown> = {
           user_metadata: { full_name: fullName, branch_id: storeId, branch_role: role },
         };
-        if (password) update.password = password;
-        const { error } = await admin.auth.admin.updateUserById(existingAuthUserId, update);
-        if (error) return response({ error: error.message || "Could not update the existing login account." }, 400);
-        authUserId = existingAuthUserId;
+        if (password) updatePayload.password = password;
+        const { error: updateErr } = await admin.auth.admin.updateUserById(found.id, updatePayload);
+        if (updateErr) return response({ error: updateErr.message || "Could not update existing account." }, 400);
+        authUserId = found.id;
       } else {
-        const { data, error } = await admin.auth.admin.createUser({ email: authEmail, password, email_confirm: true, user_metadata: { full_name: fullName, branch_id: storeId, branch_role: role } });
-        if (error || !data.user) return response({ error: error?.message || "Could not create the login account." }, 400);
-        authUserId = data.user.id;
+        if (!createData?.user) return response({ error: "Auth user was not returned after creation." }, 400);
+        authUserId = createData.user.id;
       }
     }
 

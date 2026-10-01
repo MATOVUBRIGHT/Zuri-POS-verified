@@ -215,15 +215,15 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
 
   const fetchSupplierSales = async (supplier: Supplier): Promise<SupplierSale[]> => {
     const { data: inventoryRows, error: inventoryError } = await (supabase.from("inventory") as any)
-      .select("id, product_name, supplier_id, supplier_name, supplier")
+      .select("id, product_name, supplier_id, supplier_name")
       .eq("store_id", supplier.store_id);
     if (inventoryError) throw inventoryError;
     const supplierProducts = new Set((inventoryRows || [])
-      .filter((item: any) => item.supplier_id === supplier.id || String(item.supplier_name || item.supplier || "").toLowerCase() === supplier.name.toLowerCase())
+      .filter((item: any) => item.supplier_id === supplier.id || String(item.supplier_name || "").toLowerCase() === supplier.name.toLowerCase())
       .map((item: any) => String(item.product_name || "").trim().toLowerCase())
       .filter(Boolean));
     const supplierProductIds = new Set((inventoryRows || [])
-      .filter((item: any) => item.supplier_id === supplier.id || String(item.supplier_name || item.supplier || "").toLowerCase() === supplier.name.toLowerCase())
+      .filter((item: any) => item.supplier_id === supplier.id || String(item.supplier_name || "").toLowerCase() === supplier.name.toLowerCase())
       .map((item: any) => String(item.id || ""))
       .filter(Boolean));
     if (!supplierProducts.size && !supplierProductIds.size) return [];
