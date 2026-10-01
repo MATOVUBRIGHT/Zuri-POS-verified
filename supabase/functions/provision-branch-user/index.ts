@@ -143,7 +143,9 @@ Deno.serve(async (req) => {
       user_id: authUserId,
       full_name: fullName,
       role,
-      allowed_pages: allowedPages,
+      // Explicitly stringify to JSON so Postgres receives a JSONB value,
+      // not a native array that it tries to cast from the staff composite type.
+      allowed_pages: JSON.stringify(allowedPages),
       status: "active",
       updated_at: new Date().toISOString(),
     };
