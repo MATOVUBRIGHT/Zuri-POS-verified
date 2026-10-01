@@ -60,7 +60,23 @@ export default function ExecutiveTeamAccess({ userId }: { userId: string | null 
       // Log full response so browser console shows exact error from the function
       console.log("[provision-branch-user] body sent:", JSON.stringify(body));
       console.log("[provision-branch-user] response:", { data, error });
-      if (error || data?.error) throw new Error(data?.error || error?.message || "Could not save branch user");
+
+      // When the function returns a non-2xx status, supabase-js sets data=null and
+      // wraps the HTTP error in `error`. Extract the actual JSON body from it.
+      if (error) {
+        let msg = error.message || "Could not save branch user";
+        try {
+          // FunctionsHttpError has a .context.body or we can call .json()
+          const ctx = (error as any).context;
+          if (ctx && typeof ctx.json === "function") {
+            const json = await ctx.json();
+            console.log("[provision-branch-user] raw error body:", json);
+            msg = json?.error || msg;
+          }
+        } catch {}
+        throw new Error(msg);
+      }
+      if (data?.error) throw new Error(data.error);
       toast({
         title: editing ? "User updated" : "User created",
         description: editing ? `${form.full_name} has been updated.` : `${form.full_name} can now sign in to ${branch?.store_name}.`,

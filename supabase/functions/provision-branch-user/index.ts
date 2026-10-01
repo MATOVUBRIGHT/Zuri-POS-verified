@@ -47,6 +47,7 @@ Deno.serve(async (req) => {
     const admin = createClient(url, serviceKey);
     const { data: ownedStore } = await admin.from("stores").select("id").eq("id", storeId).eq("user_id", caller.id).maybeSingle();
     const { data: accessRecord } = await admin.from("store_access").select("role").eq("store_id", storeId).eq("user_id", caller.id).maybeSingle();
+    console.log("[provision-branch-user] caller:", caller.id, "storeId:", storeId, "ownedStore:", !!ownedStore, "accessRecord:", !!accessRecord);
     if (!ownedStore && !accessRecord) return response({ error: "You can only manage staff for branches you own or have access to." }, 403);
 
     if (action === "deactivate") {
@@ -94,9 +95,30 @@ Deno.serve(async (req) => {
       if (error) return response({ error: error.message || "Could not update the login account." }, 400);
     } else {
       if (!authEmail) return response({ error: "Username is required when creating a new branch login." }, 400);
-      const { data, error } = await admin.auth.admin.createUser({ email: authEmail, password, email_confirm: true, user_metadata: { full_name: fullName, branch_id: storeId, branch_role: role } });
-      if (error || !data.user) return response({ error: error?.message || "Could not create the login account." }, 400);
-      authUserId = data.user.id;
+
+      // Check if an auth user with this email already exists (e.g. from a previous
+      // failed attempt) — reuse it rather than failing with "already exists".
+      let existingAuthUserId: string | null = null;
+      try {
+        const { data: listData } = await admin.auth.admin.listUsers({ perPage: 1000 });
+        const found = listData?.users?.find((u: any) => u.email === authEmail);
+        if (found) existingAuthUserId = found.id;
+      } catch {}
+
+      if (existingAuthUserId) {
+        // Update the existing orphaned auth user
+        const update: Record<string, unknown> = {
+          user_metadata: { full_name: fullName, branch_id: storeId, branch_role: role },
+        };
+        if (password) update.password = password;
+        const { error } = await admin.auth.admin.updateUserById(existingAuthUserId, update);
+        if (error) return response({ error: error.message || "Could not update the existing login account." }, 400);
+        authUserId = existingAuthUserId;
+      } else {
+        const { data, error } = await admin.auth.admin.createUser({ email: authEmail, password, email_confirm: true, user_metadata: { full_name: fullName, branch_id: storeId, branch_role: role } });
+        if (error || !data.user) return response({ error: error?.message || "Could not create the login account." }, 400);
+        authUserId = data.user.id;
+      }
     }
 
     const payload: Record<string, unknown> = {
