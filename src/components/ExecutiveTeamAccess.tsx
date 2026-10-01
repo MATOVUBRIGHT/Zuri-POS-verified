@@ -56,27 +56,34 @@ export default function ExecutiveTeamAccess({ userId }: { userId: string | null 
       // Send staff_id on edit so the function updates instead of creating a new user
       if (editing) body.staff_id = editing.id;
 
-      const { data, error } = await supabase.functions.invoke("provision-branch-user", { body });
-      // Log full response so browser console shows exact error from the function
-      console.log("[provision-branch-user] body sent:", JSON.stringify(body));
-      console.log("[provision-branch-user] response:", { data, error });
+      // Use raw fetch so we can always read the exact response body regardless
+      // of how supabase-js wraps the error
+      const session = await supabase.auth.getSession();
+      const accessToken = session.data.session?.access_token;
+      const supabaseUrl = (supabase as any).supabaseUrl || import.meta.env.VITE_SUPABASE_URL;
+      const anonKey = (supabase as any).supabaseKey || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-      // When the function returns a non-2xx status, supabase-js sets data=null and
-      // wraps the HTTP error in `error`. Extract the actual JSON body from it.
-      if (error) {
-        let msg = error.message || "Could not save branch user";
-        try {
-          // FunctionsHttpError has a .context.body or we can call .json()
-          const ctx = (error as any).context;
-          if (ctx && typeof ctx.json === "function") {
-            const json = await ctx.json();
-            console.log("[provision-branch-user] raw error body:", json);
-            msg = json?.error || msg;
-          }
-        } catch {}
-        throw new Error(msg);
+      const rawResp = await fetch(`${supabaseUrl}/functions/v1/provision-branch-user`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": anonKey,
+          "Authorization": `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      const rawText = await rawResp.text();
+      console.log("[provision-branch-user] status:", rawResp.status);
+      console.log("[provision-branch-user] raw response:", rawText);
+
+      let respData: any = null;
+      try { respData = JSON.parse(rawText); } catch {}
+
+      if (!rawResp.ok) {
+        throw new Error(respData?.error || `Function returned ${rawResp.status}: ${rawText}`);
       }
-      if (data?.error) throw new Error(data.error);
+      if (respData?.error) throw new Error(respData.error);
       toast({
         title: editing ? "User updated" : "User created",
         description: editing ? `${form.full_name} has been updated.` : `${form.full_name} can now sign in to ${branch?.store_name}.`,
