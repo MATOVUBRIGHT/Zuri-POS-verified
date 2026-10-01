@@ -57,6 +57,9 @@ export default function ExecutiveTeamAccess({ userId }: { userId: string | null 
       if (editing) body.staff_id = editing.id;
 
       const { data, error } = await supabase.functions.invoke("provision-branch-user", { body });
+      // Log full response so browser console shows exact error from the function
+      console.log("[provision-branch-user] body sent:", JSON.stringify(body));
+      console.log("[provision-branch-user] response:", { data, error });
       if (error || data?.error) throw new Error(data?.error || error?.message || "Could not save branch user");
       toast({
         title: editing ? "User updated" : "User created",
