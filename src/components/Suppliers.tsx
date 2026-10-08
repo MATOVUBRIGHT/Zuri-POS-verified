@@ -13,9 +13,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { LoadingSpinner, PageLoader, useMinimumLoading } from "@/components/ui/loading-spinner";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { Plus, Search, Pencil, Trash2, Truck, Phone, Mail, MapPin, Building2, DollarSign, Package, TrendingUp, CreditCard, Undo2, Loader2, FileBarChart, Download } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Truck, Phone, Mail, MapPin, Building2, DollarSign, Package, TrendingUp, CreditCard, Undo2, Loader2, FileBarChart, Download, Upload } from "lucide-react";
 import { logAudit } from "@/lib/audit";
-import ExcelImport from "@/components/ExcelImport";
+import SupplierImportDialog from "@/components/SupplierImportDialog";
 
 interface Supplier {
   id: string;
@@ -90,6 +90,7 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
   const [returnInventory, setReturnInventory] = useState<any[]>([]);
   const [returnForm, setReturnForm] = useState({ inventoryId: "", quantity: "", unitCredit: "", reason: "", reference: "" });
   const [returning, setReturning] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
 
   useEffect(() => {
     fetchSuppliers();
@@ -623,65 +624,10 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
             <FileBarChart className="h-4 w-4" /> Supplier Reports
             </Button>
           )}
-          <ExcelImport config={{
-            title: "Import Suppliers from Excel",
-            description: "Upload an Excel file with supplier data",
-            fields: [
-              { key: "name", label: "Name", required: true, type: "string" },
-              { key: "company", label: "Company", type: "string" },
-              { key: "phone", label: "Phone", type: "string" },
-              { key: "email", label: "Email", type: "string" },
-              { key: "address", label: "Address", type: "string" },
-              { key: "notes", label: "Notes", type: "string" },
-            ],
-            templateData: [
-              { "Name": "Jane Supplier", "Company": "ABC Ltd", "Phone": "+256700000000", "Email": "jane@abc.com", "Address": "Kampala", "Notes": "" },
-            ],
-            onImport: async (rows) => {
-              const { data: { user } } = await supabase.auth.getUser();
-              if (!user) throw new Error("Not authenticated");
-              const storeId = await resolveStoreId(user.id);
-              if (!storeId) throw new Error("No store found");
-
-              let success = 0;
-              const errors: string[] = [];
-              for (let i = 0; i < rows.length; i++) {
-                const row = rows[i];
-                if (!row.name) { errors.push(`Row ${i + 1}: Missing name`); continue; }
-                let res = await supabase.from("suppliers").insert({
-                  store_id: storeId,
-                  user_id: user.id,
-                  name: String(row.name).trim(),
-                  company: row.company ? String(row.company) : null,
-                  phone: row.phone ? String(row.phone) : null,
-                  email: row.email ? String(row.email) : null,
-                  address: row.address ? String(row.address) : null,
-                  notes: row.notes ? String(row.notes) : null,
-                } as any);
-
-                if (res.error) {
-                  const msg = String(res.error.message || "").toLowerCase();
-                  const looksLikeMissingUserId =
-                    msg.includes("user_id") && (msg.includes("column") || msg.includes("schema cache") || msg.includes("does not exist"));
-                  if (looksLikeMissingUserId) {
-                    res = await supabase.from("suppliers").insert({
-                      store_id: storeId,
-                      name: String(row.name).trim(),
-                      company: row.company ? String(row.company) : null,
-                      phone: row.phone ? String(row.phone) : null,
-                      email: row.email ? String(row.email) : null,
-                      address: row.address ? String(row.address) : null,
-                      notes: row.notes ? String(row.notes) : null,
-                    } as any);
-                  }
-                }
-
-                if (res.error) { errors.push(`Row ${i + 1}: ${res.error.message}`); } else { success++; }
-              }
-              fetchSuppliers();
-              return { success, errors };
-            },
-          }} />
+          <Button variant="outline" className="gap-2" onClick={() => setImportDialogOpen(true)}>
+            <Upload className="h-4 w-4" />
+            Import Suppliers
+          </Button>
           <Dialog open={isDialogOpen} onOpenChange={(open) => { setIsDialogOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger asChild>
               <Button className="gap-2">
@@ -990,6 +936,17 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
           <div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setReturningSupplier(null)}>Cancel</Button><Button disabled={returning || !returnForm.inventoryId} onClick={() => void saveSupplierReturn()}>{returning && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Record supplier return</Button></div>
         </DialogContent>
       </Dialog>
+      
+      {/* Supplier Import Dialog */}
+      <SupplierImportDialog
+        isOpen={importDialogOpen}
+        onClose={() => setImportDialogOpen(false)}
+        storeId={currentStoreId || ''}
+        onImportComplete={() => {
+          fetchSuppliers();
+          setImportDialogOpen(false);
+        }}
+      />
     </div>
   );
 };
