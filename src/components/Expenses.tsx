@@ -66,6 +66,12 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // `isSubmitting` is read through the closure captured at render, so a fast
+  // double-tap can fire handleSubmit twice before React re-renders and disables
+  // the button. That produced two rows in `expenses` because the two inserts
+  // get different server ids, which dedupeRowsById cannot collapse. A ref latch
+  // is set synchronously, so the second submit is rejected immediately.
+  const submittingRef = useRef(false);
   const [addOpen, setAddOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterCategory, setFilterCategory] = useState("all");
@@ -112,11 +118,12 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSubmitting) return;
+    if (submittingRef.current) return;
     const amount = parseFloat(formData.amount) || 0;
     const v = expenseSchema.safeParse({ description: formData.description, category: formData.category, amount, date: formData.date });
     if (!v.success) { toast({ title: "Validation Error", description: v.error.errors.map(e => e.message).join(", "), variant: "destructive" }); return; }
 
+    submittingRef.current = true;
     setIsSubmitting(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -158,7 +165,7 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
       setAddOpen(false);
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
-    } finally { setIsSubmitting(false); }
+    } finally { submittingRef.current = false; setIsSubmitting(false); }
   };
 
   

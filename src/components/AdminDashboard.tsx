@@ -323,8 +323,7 @@ const AdminDashboard = () => {
                     <div className="grid grid-cols-2 gap-3 text-sm">
                       <div><p className="text-xs text-muted-foreground">User ID</p><p className="font-mono text-xs break-all">{selectedUser.user_id}</p></div>
                       <div><p className="text-xs text-muted-foreground">Account Status</p><Badge className="mt-0.5">{selectedUser.account_status || "active"}</Badge></div>
-                      <div><p className="text-xs text-muted-foreground">Joined</p><p>{format(new Date(selectedUser.created_at), "PPP")}</p></div>
-                      {selectedUser.last_login && <div><p className="text-xs text-muted-foreground">Last Login</p><p>{format(new Date(selectedUser.last_login), "PPP")}</p></div>}
+<div><p className="text-xs text-muted-foreground">Joined</p><p>{format(new Date(selectedUser.created_at), "PPP")}</p></div>
                     </div>
                   </div>
                   {/* Subscription */}
@@ -336,8 +335,8 @@ const AdminDashboard = () => {
                         <div><p className="text-xs text-muted-foreground">Price</p><p>{fmtCurrency(sub.subscription_plans?.price ?? 0)}</p></div>
                         <div><p className="text-xs text-muted-foreground">Status</p><div className="mt-0.5">{statusBadge(sub.status)}</div></div>
                         <div><p className="text-xs text-muted-foreground">Amount Paid</p><p className="font-semibold text-green-600">{sub.amount_paid != null ? `${fmtCurrency(sub.amount_paid)}` : "Not paid"}</p></div>
-                        <div><p className="text-xs text-muted-foreground">Payment Ref</p><p className="font-mono text-xs">{sub.payment_reference || "—"}</p></div>
-                        <div><p className="text-xs text-muted-foreground">Expires</p><p>{sub.expires_at ? format(new Date(sub.expires_at), "PPP") : "—"}</p></div>
+                        <div><p className="text-xs text-muted-foreground">Payment Ref</p><p className="font-mono text-xs">{sub.payment_reference || "ï¿½"}</p></div>
+                        <div><p className="text-xs text-muted-foreground">Expires</p><p>{sub.expires_at ? format(new Date(sub.expires_at), "PPP") : "ï¿½"}</p></div>
                         {sub.verified_at && <div className="col-span-2"><p className="text-xs text-muted-foreground">Verified</p><p className="text-green-600">{format(new Date(sub.verified_at), "PPP p")}</p></div>}
                       </div>
                     </div>

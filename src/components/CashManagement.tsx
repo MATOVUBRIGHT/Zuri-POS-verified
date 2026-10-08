@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { fmtCurrency, getCurrencySymbol } from "@/lib/currency";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { CashTransaction } from "@/types";
 import BankCashForm, { type BranchAccount } from "@/components/BankCashForm";
+import { usePaymentAccounts } from "@/hooks/usePaymentAccounts";
 
 interface CashManagementProps {
   availableCash: number;
@@ -34,7 +35,6 @@ const CashManagement = ({ availableCash, storeId, onUpdateCash, onClose }: CashM
   const [manualClosing, setManualClosing] = useState<string>("");
   // "manage" is the add/remove cash form; "bank" moves the till into an account.
   const [mode, setMode] = useState<"manage" | "bank">("manage");
-  const [bankAccounts, setBankAccounts] = useState<BranchAccount[]>([]);
   const { toast } = useToast();
 
   const accountOptions = [
@@ -144,25 +144,18 @@ const CashManagement = ({ availableCash, storeId, onUpdateCash, onClose }: CashM
 
   // Receiving accounts for the bank form. Read straight from the storeId prop so
   // the deposit always targets the branch the cashier is actually working in.
-  const loadBankAccounts = async () => {
-    if (!storeId) {
-      setBankAccounts([]);
-      return;
-    }
-    // branch_payment_accounts is missing from the generated types; the cast
-    // mirrors PaymentAccounts.tsx.
-    const { data } = await (supabase.from("branch_payment_accounts" as any) as any)
-      .select("id, name, provider_type, account_number")
-      .eq("store_id", storeId)
-      .eq("is_active", true)
-      .order("name", { ascending: true });
-    setBankAccounts((data ?? []) as BranchAccount[]);
-  };
+  // Query-backed so realtime/polling refresh the list when accounts change.
+  const accountsQuery = usePaymentAccounts(storeId ?? null, true);
+  const bankAccounts = (accountsQuery.data ?? []) as unknown as BranchAccount[];
 
-  useEffect(() => {
-    if (mode === "bank") void loadBankAccounts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, storeId]);
+  // Keep the refetch fn in a ref: React Query returns a new result object on every
+  // render, so depending on `accountsQuery` re-created this callback each render.
+  const refetchBankAccountsRef = useRef(accountsQuery.refetch);
+  refetchBankAccountsRef.current = accountsQuery.refetch;
+
+  const loadBankAccounts = useCallback(async () => {
+    await refetchBankAccountsRef.current();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -269,7 +262,7 @@ const CashManagement = ({ availableCash, storeId, onUpdateCash, onClose }: CashM
               className="gap-2"
             >
               <Landmark className="h-4 w-4" />
-              {mode === "bank" ? "Back" : "Bank"}
+              Bank
             </Button>
             <Button
               variant="outline"

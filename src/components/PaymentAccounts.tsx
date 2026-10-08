@@ -1,34 +1,96 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LoadingMark, PageLoader, useMinimumLoading } from "@/components/ui/loading-spinner";
-import { CircleAlert, Info, Landmark, Pencil, Plus, Scale, WalletCards } from "lucide-react";
+import { CircleAlert, ExternalLink as ExternalLinkIcon, Info, Landmark, MoreVertical, Pencil, Plus, Scale, WalletCards } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtCurrency } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  ACCOUNTS_KEY,
+  BALANCES_KEY,
+  LEDGER_KEY,
+  usePaymentAccountBalances,
+  usePaymentAccountLedger,
+  usePaymentAccounts,
+} from "@/hooks/usePaymentAccounts";
 
 type Account = { id: string; store_id: string; name: string; provider_type: string; account_number: string | null; reference_instructions: string | null; external_link?: string | null; opening_balance: number; is_active: boolean };
 type Branch = { id: string; store_name: string };
-type Ledger = { id: string; account_id: string; amount: number; entry_type: string; reference: string | null; notes: string | null; created_at: string };
+type Ledger = { id: string; account_id: string; amount: number; entry_type: string; reference: string | null; notes: string | null; created_by?: string | null; created_at: string };
 const TYPES = ["cash", "bank", "mobile_money", "pesapal", "card", "other"];
-const label = (value: string) => value.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+const label = (value: string) => String(value ?? "").replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+const isMissingColumn = (error: { code?: string; message?: string } | null) =>
+  error?.code === "42703" || /external_link|column .* does not exist/i.test(error?.message || "");
+const readLink = (source: unknown) => (typeof source === "string" ? source.trim() : "");
+const withOptionalLink = <T extends Record<string, unknown>>(payload: T, raw: unknown) => {
+  const value = readLink(raw);
+  return value ? { ...payload, external_link: value } : payload;
+};
 const blank = { name: "", provider_type: "cash", account_number: "", reference_instructions: "", external_link: "", opening_balance: "0", is_active: true };
+// Stable identities. A fresh `?? []` literal would be a new array on every
+// render while data is undefined, which re-triggers effects keyed on it.
+const NO_ACCOUNTS: Account[] = [];
+const NO_LEDGER: Ledger[] = [];
+const NO_BALANCES: Record<string, number> = {};
 
 export default function PaymentAccounts({ currentStoreId, executive = false, userId }: { currentStoreId?: string | null; executive?: boolean; userId?: string | null }) {
   const { toast } = useToast();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [storeId, setStoreId] = useState(currentStoreId || "");
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [ledger, setLedger] = useState<Ledger[]>([]);
-  const [balances, setBalances] = useState<Record<string, number>>({});
+  const queryClient = useQueryClient();
 
-  const [loading, setLoading] = useState(true);
+  // Accounts, ledger and balances are query-backed so Supabase Realtime (and the
+  // polling fallback) can refresh them the moment another device edits them.
+  const accountsQuery = usePaymentAccounts(storeId);
+  const ledgerQuery = usePaymentAccountLedger(storeId);
+  const balancesQuery = usePaymentAccountBalances(storeId);
+
+  const accounts = (accountsQuery.data ?? NO_ACCOUNTS) as unknown as Account[];
+  const ledger = (ledgerQuery.data ?? NO_LEDGER) as unknown as Ledger[];
+  const balances = balancesQuery.data ?? NO_BALANCES;
+
+  // payment_account_ledger.created_by points at auth.users, which RLS hides from
+  // this client. Resolve display names from profiles for just the ids present in
+  // the current history window rather than pulling the whole staff list.
+  const [actorNames, setActorNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const ids = [...new Set(ledger.map((row) => row.created_by).filter((id): id is string => Boolean(id)))];
+    // Keep the previous object identity when already empty: setting a fresh {}
+    // unconditionally re-renders, which re-runs this effect and loops.
+    if (!ids.length) {
+      setActorNames((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase.from("profiles").select("user_id, full_name").in("user_id", ids);
+      if (cancelled || !data) return;
+      const next: Record<string, string> = {};
+      for (const profile of data as Array<{ user_id: string; full_name: string | null }>) {
+        if (profile.full_name) next[profile.user_id] = profile.full_name;
+      }
+      setActorNames(next);
+    })();
+    return () => { cancelled = true; };
+  }, [ledger]);
+
+  const loading =
+    (accountsQuery.isLoading && !accounts.length) ||
+    (balancesQuery.isLoading && !Object.keys(balances).length);
   const showLoader = useMinimumLoading(loading, 350);
   const [dialog, setDialog] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
@@ -61,21 +123,21 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
     setStoreId((v) => v || currentStoreId || rows[0]?.id || "");
   }, [currentStoreId, executive, userId]);
 
+  // Refetch through the query cache rather than fetching directly, so realtime
+// invalidation and this manual refresh share one source of truth.
   const load = useCallback(async () => {
-    if (!storeId) { setLoading(false); return; }
-    setLoading(true);
-    const [a, l, b] = await Promise.all([
-      supabase.from("branch_payment_accounts" as any).select("*").eq("store_id", storeId).order("created_at", { ascending: false }),
-      supabase.from("payment_account_ledger" as any).select("*").eq("store_id", storeId).order("created_at", { ascending: false }).limit(12),
-      supabase.rpc("get_payment_account_balances" as any, { p_store_id: storeId }),
+    if (!storeId) return;
+    await Promise.all([
+      queryClient.refetchQueries({ queryKey: [ACCOUNTS_KEY, storeId] }),
+      queryClient.refetchQueries({ queryKey: [LEDGER_KEY, storeId] }),
+      queryClient.refetchQueries({ queryKey: [BALANCES_KEY, storeId] }),
     ]);
-    const error = a.error || l.error || b.error;
+  }, [storeId, queryClient]);
+
+  useEffect(() => {
+    const error = accountsQuery.error || ledgerQuery.error || balancesQuery.error;
     if (error) toast({ title: "Accounts unavailable", description: error.message, variant: "destructive" });
-    setAccounts((a.data || []) as unknown as Account[]);
-    setLedger((l.data || []) as unknown as Ledger[]);
-    setBalances(Object.fromEntries(((b.data || []) as any[]).map((row) => [row.account_id, Number(row.available_balance || 0)])));
-    setLoading(false);
-  }, [storeId, toast]);
+  }, [accountsQuery.error, ledgerQuery.error, balancesQuery.error, toast]);
 
   useEffect(() => { void loadBranches(); }, [loadBranches]);
   useEffect(() => { void load(); }, [load]);
@@ -88,43 +150,62 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
       provider_type: account.provider_type,
       account_number: account.account_number || "",
       reference_instructions: account.reference_instructions || "",
-      external_link: (account as any).external_link || "",
+      external_link: account.external_link || "",
       opening_balance: String(account.opening_balance || 0),
       is_active: account.is_active,
     });
     setDialog(true);
   };
 
+  const writeAccount = async (payload: Record<string, unknown>) => {
+    const query = supabase.from("branch_payment_accounts" as any) as any;
+    return editing ? query.update(payload).eq("id", editing.id) : query.insert(payload);
+  };
+
   const save = async () => {
     if (!storeId || !form.name.trim()) return;
     setSaving(true);
     const { data: auth } = await supabase.auth.getUser();
-    const payload = editing
-      ? {
-          name: form.name.trim(),
-          provider_type: form.provider_type,
-          account_number: form.account_number.trim() || null,
-          reference_instructions: form.reference_instructions.trim() || null,
-          external_link: (form as any).external_link?.trim() || null,
-          is_active: form.is_active,
-        }
-      : {
-          store_id: storeId,
-          name: form.name.trim(),
-          provider_type: form.provider_type,
-          account_number: form.account_number.trim() || null,
-          reference_instructions: form.reference_instructions.trim() || null,
-          external_link: (form as any).external_link?.trim() || null,
-          opening_balance: Number(form.opening_balance || 0),
-          is_active: form.is_active,
-          created_by: auth.user?.id,
-        };
-    const result: any = editing
-      ? await (supabase.from("branch_payment_accounts" as any) as any).update(payload).eq("id", editing.id)
-      : await (supabase.from("branch_payment_accounts" as any) as any).insert(payload);
+    // A cash account is physical money: it has no account number and no bank or
+    // portal link, so those values are forced empty rather than trusted from the
+    // form. Without this, switching a previously-configured account to Cash kept
+    // sending the stale number/link.
+    const isCash = form.provider_type === "cash";
+    const shared = {
+      name: form.name.trim(),
+      provider_type: form.provider_type,
+      account_number: isCash ? null : form.account_number.trim() || null,
+      reference_instructions: form.reference_instructions.trim() || null,
+      is_active: form.is_active,
+    };
+    const payload = withOptionalLink(
+      editing
+        ? shared
+        : { ...shared, store_id: storeId, opening_balance: Number(form.opening_balance || 0), created_by: auth.user?.id },
+      isCash ? "" : (form as Record<string, unknown>).external_link,
+    );
+
+    let result: any = await writeAccount(payload);
+    let linkSkipped = false;
+    if (result.error && isMissingColumn(result.error) && "external_link" in payload) {
+      const { external_link: _omitted, ...withoutLink } = payload;
+      result = await writeAccount(withoutLink);
+      linkSkipped = !result.error;
+    }
     setSaving(false);
-    if (result.error) { toast({ title: "Could not save account", description: result.error.message, variant: "destructive" }); return; }
-    toast({ title: editing ? "Account updated" : "Receiving account added" });
+
+    if (result.error) {
+      toast({ title: "Could not save account", description: result.error.message, variant: "destructive" });
+      return;
+    }
+    if (linkSkipped) {
+      toast({
+        title: editing ? "Account updated" : "Receiving account added",
+        description: "The link was skipped because this database is missing the external_link column.",
+      });
+    } else {
+      toast({ title: editing ? "Account updated" : "Receiving account added" });
+    }
     setDialog(false);
     void load();
   };
@@ -132,6 +213,22 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
   // Reconciliation. Zuri only knows what a human typed into it, so provider
   // charges are invisible until someone reads them off a statement. The gap
   // between the recorded balance and the statement balance is that charge.
+  const promptForLink = async (account: Account) => {
+    const link = window.prompt('External link (https://...)');
+    if (!link) return;
+    const { error } = await (supabase as any).from('branch_payment_accounts').update({ external_link: link.trim() }).eq('id', account.id);
+    if (error && isMissingColumn(error)) {
+      return toast({
+        title: 'Links are unavailable on this database',
+        description: 'Run migration 20260926050000_payment_account_external_link.sql, then set the link again. The account itself is unaffected.',
+        variant: 'destructive',
+      });
+    }
+    if (error) return toast({ title: 'Could not save link', description: error.message, variant: 'destructive' });
+    toast({ title: 'Link saved' });
+    void load();
+  };
+
   const openReconcile = async (account: Account) => {
     setReconciling(account);
     setStatementBalance("");
@@ -265,45 +362,54 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
       ) : (
         <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {accounts.map((account) => (
-              <Card key={account.id} className={!account.is_active ? "opacity-60" : "metric-card metric-card-cash"}>
+            {accounts.map((account, index) => {
+              // Rotate the existing metric gradients so neighbouring accounts are
+              // visually distinct instead of every card sharing one colour.
+              const variant = ["metric-card-cash", "metric-card-sales", "metric-card-stock", "metric-card-profit"][index % 4];
+              return (
+              <Card key={account.id} className={!account.is_active ? "opacity-60" : `metric-card ${variant}`}>
                 <CardHeader className="pb-2">
-                  <div className="flex items-start justify-between">
-                    <CardTitle className="text-base text-white">{account.name}</CardTitle>
-                    <span className="rounded bg-white/15 px-2 py-1 text-[10px] font-bold uppercase text-white">{label(account.provider_type)}</span>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <CardTitle className="text-base text-white">{account.name}</CardTitle>
+                      <CardDescription className="text-white/70">
+                        {account.provider_type === "cash"
+                          ? "Physical cash · no account number"
+                          : account.account_number || "No account number"}
+                      </CardDescription>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="rounded bg-white/15 px-2 py-1 text-[10px] font-bold uppercase text-white">{label(account.provider_type)}</span>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-white hover:bg-white/20 hover:text-white" aria-label={`More actions for ${account.name}`}>
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onSelect={() => void openReconcile(account)}><Scale className="mr-2 h-4 w-4" />Reconcile</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => { setAdjusting(account); setAdjustment({ amount: "", entry_type: "adjustment", reference: "", notes: "" }); }}><WalletCards className="mr-2 h-4 w-4" />Record entry</DropdownMenuItem>
+                          {account.external_link ? (
+                            <DropdownMenuItem onSelect={() => { try { window.open(account.external_link, '_blank'); } catch {} }}><ExternalLinkIcon className="mr-2 h-4 w-4" />Open link</DropdownMenuItem>
+                          ) : executive ? (
+                            <DropdownMenuItem onSelect={() => void promptForLink(account)}><ExternalLinkIcon className="mr-2 h-4 w-4" />Set link</DropdownMenuItem>
+                          ) : null}
+                          {executive && <DropdownMenuItem onSelect={() => openEdit(account)}><Pencil className="mr-2 h-4 w-4" />Edit account</DropdownMenuItem>}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </div>
-                  <CardDescription className="text-white/70">{account.account_number || "No account number"}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <p className="text-2xl font-bold text-black">{fmtCurrency(balances[account.id] || 0)}</p>
                   <p className="mt-1 text-xs text-white/70">Entered in Zuri only {account.is_active ? "" : "· Inactive"}</p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Button size="sm" onClick={() => void openReconcile(account)}>
-                      <Scale className="mr-1 h-3.5 w-3.5" />Reconcile
-                    </Button>
-                    {executive && (
-                      <Button size="sm" variant="secondary" onClick={() => openEdit(account)}><Pencil className="mr-1 h-3.5 w-3.5" />Edit</Button>
-                    )}
-                    <Button size="sm" variant="secondary" onClick={() => { setAdjusting(account); setAdjustment({ amount: "", entry_type: "adjustment", reference: "", notes: "" }); }}>Record entry</Button>
-                    {account.external_link ? (
-                      <Button size="sm" onClick={() => { try { window.open(account.external_link, '_blank'); } catch {} }}>Open</Button>
-                    ) : executive ? (
-                      <Button size="sm" onClick={async () => {
-                        const link = window.prompt('External link (https://...)');
-                        if (!link) return;
-                        const { error } = await (supabase as any).from('branch_payment_accounts').update({ external_link: link }).eq('id', account.id);
-                        if (error) return toast({ title: 'Could not save link', description: error.message, variant: 'destructive' });
-                        toast({ title: 'Link saved' });
-                        void load();
-                      }}>Set link</Button>
-                    ) : null}
-                  </div>
                 </CardContent>
               </Card>
-            ))}
+              );
+            })}
           </div>
 
-          <Activity accounts={accounts} ledger={ledger} />
+          <Activity accounts={accounts} ledger={ledger} users={actorNames} />
         </>
       )}
 
@@ -325,10 +431,12 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
                 <SelectContent>{TYPES.map((type) => <SelectItem key={type} value={type}>{label(type)}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div>
-              <Label>Account, phone, till or paybill number</Label>
-              <Input value={form.account_number} onChange={(event) => setForm({ ...form, account_number: event.target.value })} />
-            </div>
+            {form.provider_type !== "cash" && (
+              <div>
+                <Label>Account, phone, till or paybill number</Label>
+                <Input value={form.account_number} onChange={(event) => setForm({ ...form, account_number: event.target.value })} />
+              </div>
+            )}
 
             {editing ? (
               <p className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">Opening balance is locked after creation. Record a signed adjustment to correct it and preserve the audit trail.</p>
@@ -352,10 +460,16 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
               <Textarea value={form.reference_instructions} onChange={(event) => setForm({ ...form, reference_instructions: event.target.value })} placeholder="What cashier should record with the sale" />
             </div>
 
-            <div>
-              <Label>External link (bank / payment portal)</Label>
-              <Input value={form.external_link} onChange={(event) => setForm({ ...form, external_link: event.target.value })} placeholder="https://bank.example.com/payment" />
-            </div>
+            {form.provider_type !== "cash" && (
+              <div>
+                <Label>External link (optional)</Label>
+                <Input value={form.external_link} onChange={(event) => setForm({ ...form, external_link: event.target.value })} placeholder="https://bank.example.com/payment" />
+                <p className="mt-1 text-xs text-muted-foreground">Optional. Leave blank if this account has no bank or portal link.</p>
+              </div>
+            )}
+            {form.provider_type === "cash" && (
+              <p className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">Cash accounts hold physical money, so no account number or external link is needed.</p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog(false)}>Cancel</Button>
@@ -541,28 +655,76 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
   );
 }
 
-function Activity({ accounts, ledger }: { accounts: Account[]; ledger: Ledger[] }) {
+function Activity({ accounts, ledger, users }: { accounts: Account[]; ledger: Ledger[]; users: Record<string, string> }) {
+  // Date picker filters the history to a single day; clearing it restores all
+  // activity. Compared on the local calendar day, not the UTC timestamp, so a
+  // late-evening entry is not filed under the next day.
+  const [day, setDay] = useState("");
+  const [accountId, setAccountId] = useState("all");
+  const visible = useMemo(() => ledger.filter((row) => {
+    if (accountId !== "all" && row.account_id !== accountId) return false;
+    if (!day) return true;
+    const at = new Date(row.created_at);
+    if (Number.isNaN(at.getTime())) return false;
+    const local = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+    return local === day;
+  }), [ledger, day, accountId]);
+  const accountName = (id: string) => accounts.find((account) => account.id === id)?.name || "Account";
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Recent account activity</CardTitle>
-        <CardDescription>Incoming sales and explicit adjustments for this branch.</CardDescription>
+        <CardTitle className="text-base">Account history</CardTitle>
+        <CardDescription>Every sale and adjustment on this branch&apos;s accounts, with who recorded it.</CardDescription>
       </CardHeader>
-      <CardContent>
-        {ledger.length ? (
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-2">
+            <Label htmlFor="activity-day">Date</Label>
+            <Input id="activity-day" type="date" className="w-[170px]" value={day} max={new Date().toISOString().slice(0, 10)} onChange={(event) => setDay(event.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="activity-account">Account</Label>
+            <Select value={accountId} onValueChange={setAccountId}>
+              <SelectTrigger id="activity-account" className="w-[200px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All accounts</SelectItem>
+                {accounts.map((account) => <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          {(day || accountId !== "all") && (
+            <Button variant="outline" size="sm" onClick={() => { setDay(""); setAccountId("all"); }}>Clear filters</Button>
+          )}
+          <p className="ml-auto text-xs text-muted-foreground">
+            {visible.length} of {ledger.length} {ledger.length === 1 ? "entry" : "entries"}
+          </p>
+        </div>
+        {visible.length ? (
           <div className="space-y-3">
-            {ledger.map((row) => (
-              <div className="flex items-center justify-between border-b pb-3 last:border-0" key={row.id}>
-                <div>
-                  <p className="text-sm font-medium">{accounts.find((account) => account.id === row.account_id)?.name || "Account"} · {label(row.entry_type)}</p>
-                  <p className="text-xs text-muted-foreground">{row.reference || row.notes || new Date(row.created_at).toLocaleString()}</p>
+            {visible.map((row) => {
+              const at = new Date(row.created_at);
+              const actor = row.created_by ? users[row.created_by] : null;
+              return (
+                <div className="flex items-start justify-between gap-4 border-b pb-3 last:border-0" key={row.id}>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{accountName(row.account_id)} · {label(row.entry_type)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {Number.isNaN(at.getTime()) ? "Date unknown" : at.toLocaleString()}
+                      {actor ? ` · by ${actor}` : ""}
+                    </p>
+                    {(row.reference || row.notes) && (
+                      <p className="mt-1 text-xs text-muted-foreground">{row.reference || row.notes}</p>
+                    )}
+                  </div>
+                  <p className={`shrink-0 font-semibold ${Number(row.amount) < 0 ? "text-destructive" : "text-emerald-600"}`}>{Number(row.amount) < 0 ? "−" : "+"}{fmtCurrency(Math.abs(Number(row.amount)))}</p>
                 </div>
-                <p className={Number(row.amount) < 0 ? "font-semibold text-destructive" : "font-semibold text-emerald-600"}>{Number(row.amount) < 0 ? "−" : "+"}{fmtCurrency(Math.abs(Number(row.amount)))}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
-          <p className="py-5 text-sm text-muted-foreground">No account activity has been recorded for this branch.</p>
+          <p className="py-5 text-sm text-muted-foreground">
+            {ledger.length ? "No account activity matches these filters." : "No account activity has been recorded for this branch."}
+          </p>
         )}
       </CardContent>
     </Card>

@@ -30,7 +30,7 @@ import BankCash from "@/components/BankCash";
 import ScheduledPayments from "@/components/ScheduledPayments";
 import ExecutiveExpenses from "@/components/ExecutiveExpenses";
 import Tracker from "@/components/Tracker";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { StockItem, SaleItem, ExpenseItem, Product, Category, Staff } from "@/types";
 
@@ -172,6 +172,18 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
       setPageParams(null);
     }
   }, [currentPage, executivePage, isExecutiveRoot, setCurrentPage, setPageParams]);
+
+  // An accountant has no reason to be sitting in a branch POS shell: on a POS
+  // route the role check below never completes, so /pos/:storeId renders the
+  // regular POS pages (sales, inventory, ...) instead of the accountant
+  // workspace, and only the "Back to Executive Dashboard" button recovers it.
+  // Owner/boss keep the deliberate POS-entry behaviour above, so redirect only
+  // accountants once their role is known.
+  useEffect(() => {
+    if (!roleResolved || !posStoreId) return;
+    if (resolvedWorkspaceRole !== "accountant") return;
+    navigate("/", { replace: true });
+  }, [roleResolved, posStoreId, resolvedWorkspaceRole, navigate]);
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
@@ -1039,10 +1051,23 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
         case "accountant-dashboard":
           return <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => handlePageChange("executive-reports")} />;
         case "executive-branches":
-          return <ExecutiveWorkspace page="executive-branches" userId={userId} onOpenBranch={openBranchPos} />;
+          return (
+            <ExecutiveWorkspace
+              page="executive-branches"
+              userId={userId}
+              onOpenBranch={openBranchPos}
+              canCreateBranch={resolvedWorkspaceRole !== "accountant"}
+            />
+          );
         case "executive-finance":
-          return <ExecutiveWorkspace page="executive-finance" userId={userId} onOpenBranch={openBranchPos} />;
+          return <ExecutiveWorkspace page="executive-finance" userId={userId} onOpenBranch={openBranchPos} />
         case "executive-expenses":
+          // An accountant approves spending but does not submit their own. The nav
+          // omits this page; guard the route too so a stale `currentPage` or a direct
+          // handlePageChange cannot render it.
+          if (resolvedWorkspaceRole === "accountant") {
+            return <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => handlePageChange("executive-reports")} />;
+          }
           return <ExecutiveExpenses userId={userId} />;
         case "executive-accounts":
           return <PaymentAccounts executive userId={userId} />;
@@ -1203,7 +1228,13 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
 
   // Enforce page restrictions: if staff tries to access unauthorized page, redirect
   const effectivePage = useMemo(() => {
-    if (hasExecutivePosAccess || isAdmin || userRole === "owner" || userRole === "boss") return currentPage;
+    // Executive-workspace users (owner/boss/accountant/admin) are governed by the
+    // executive page routing above, not by the branch staff allow-list. Without
+    // this, an accountant at "/" falls through to `staffAllowedPages[0] ||
+    // "sales-entry"` while the executive effect resets the page, and the two
+    // effects ping-pong until React aborts with "Maximum update depth exceeded".
+    if (isExecutiveUser || isAdmin || hasExecutivePosAccess) return currentPage;
+    if (userRole === "owner" || userRole === "boss") return currentPage;
     // A direct branch session never receives an implicit POS allow-list. The
     // branch access state below blocks rendering until its staff assignment is
     // loaded, and an empty server allow-list remains deliberately unusable.
@@ -1211,15 +1242,14 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
     if (currentPage === "stores") return currentPage;
     if (staffAllowedPages.includes(currentPage)) return currentPage;
     return staffAllowedPages[0] || "sales-entry";
-  }, [activeStaff, hasExecutivePosAccess, isAdmin, userRole, currentPage, posStoreId, staffAllowedPages]);
+  }, [activeStaff, hasExecutivePosAccess, isAdmin, isExecutiveUser, userRole, currentPage, posStoreId, staffAllowedPages]);
 
-  // Sync if page was redirected by the allowed-pages guard
+  // Sync if page was redirected
   useEffect(() => {
     if (effectivePage !== currentPage) {
       setCurrentPage(effectivePage);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectivePage]);
+  }, [effectivePage, currentPage]);
 
   // Removed full-screen loading guard – open instantly
 
@@ -1271,7 +1301,9 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
   // Direct operational URLs must never inherit access from a persisted POS
   // session. Wait for the matching authenticated staff assignment, then fail
   // closed if the account is unassigned or has no pages granted.
-  if (posStoreId && (!roleResolved || (!hasExecutivePosAccess && branchStaffAccessState === "loading"))) {
+  // An accountant being redirected off a POS route keeps this loader up until the
+    // route changes, so the regular POS pages are never painted even for a frame.
+    if (posStoreId && (!roleResolved || (roleResolved && resolvedWorkspaceRole === "accountant") || (!hasExecutivePosAccess && branchStaffAccessState === "loading"))) {
     return <PageLoader text="Confirming your branch access" className="min-h-screen" />;
   }
 
@@ -1348,10 +1380,6 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
       {/* Cash Management Popup */}
       <Dialog open={showCashPopup} onOpenChange={setShowCashPopup}>
         <DialogContent className="max-w-2xl p-0 overflow-y-auto overscroll-contain border-none bg-transparent">
-          <DialogTitle className="sr-only">Cash management</DialogTitle>
-          <DialogDescription className="sr-only">
-            Review and manage this branch's cash transactions.
-          </DialogDescription>
           <CashManagement
             availableCash={availableCash}
             storeId={currentStoreId ?? undefined}

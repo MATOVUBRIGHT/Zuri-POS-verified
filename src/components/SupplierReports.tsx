@@ -15,9 +15,12 @@ import { Textarea } from "@/components/ui/textarea";
 import StatCard from "@/components/StatCard";
 import { PageLoader, useMinimumLoading } from "@/components/ui/loading-spinner";
 
-type Supplier = { id: string; name: string; email: string | null; address?: string | null };
+type Supplier = { id: string; name: string; email: string | null; address?: string | null; phone?: string | null; company?: string | null };
 type InventoryRow = { supplier_id?: string | null; supplier?: string | null; supplier_name?: string | null; product_name?: string; productName?: string; cost_per_unit?: number; costPerUnit?: number; quantity?: number; min_stock_level?: number; reorder_quantity?: number };
-type ReportRow = Supplier & { items: number; sales: number; cost: number; fee: number; sent: boolean; products: Array<{ name: string; quantity: number; sales: number; cost: number }>; restockProducts: string[] };
+// `brandFeePct` is what the user types (a percentage of sales). `fee` is the
+// derived currency amount used in every total, so the arithmetic stays in one
+// place instead of each consumer re-deriving it.
+type ReportRow = Supplier & { items: number; sales: number; cost: number; fee: number; brandFeePct: number; sent: boolean; products: Array<{ name: string; quantity: number; sales: number; cost: number }>; restockProducts: string[] };
 type ReportTemplate = {
   companyName: string;
   address: string;
@@ -111,6 +114,19 @@ const SupplierReports = ({ currentStoreId, onBack }: SupplierReportsProps) => {
   const [templateOpen, setTemplateOpen] = useState(false);
   const [attachOnSend, setAttachOnSend] = useState(true);
   const [previewSupplierId, setPreviewSupplierId] = useState("");
+  // The preview iframe reports its own fitted height so the popup scrolls once,
+  // end to end, instead of the preview overflowing inside a nested scroll area.
+  const [previewHeight, setPreviewHeight] = useState(640);
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || data.type !== "zuri-supplier-report") return;
+      const next = Number(data.height);
+      if (Number.isFinite(next) && next > 0) setPreviewHeight(Math.min(Math.max(next, 240), 4000));
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
   const [emailProvider, setEmailProvider] = useState<EmailProvider>("gmail");
   const [emailLinkOpen, setEmailLinkOpen] = useState(false);
   const [emailProviderLinks, setEmailProviderLinks] = useState<Record<EmailProvider, string>>(() => {
@@ -120,8 +136,8 @@ const SupplierReports = ({ currentStoreId, onBack }: SupplierReportsProps) => {
   });
   const [supplierQuery, setSupplierQuery] = useState("");
   const [supplierSort, setSupplierSort] = useState<"name" | "location">("location");
-  const [popupRequest, setPopupRequest] = useState<"print" | "combined" | "email" | null>(null);
-  const [pendingPrintReports, setPendingPrintReports] = useState<ReportRow[]>([]);
+  const [popupRequest, setPopupRequest] = useState<"email" | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [pendingEmailTargets, setPendingEmailTargets] = useState<ReportRow[]>([]);
   const showLoader = useMinimumLoading(loading, 350);
 
@@ -160,7 +176,7 @@ const SupplierReports = ({ currentStoreId, onBack }: SupplierReportsProps) => {
     setLoading(true);
     try {
       const [supplierResult, inventoryResult, salesResult, storeResult] = await Promise.all([
-        supabase.from("suppliers").select("id, name, email, address").eq("store_id", currentStoreId).order("name"),
+        supabase.from("suppliers").select("id, name, email, address, phone, company").eq("store_id", currentStoreId).order("name"),
         supabase.from("inventory").select("*").eq("store_id", currentStoreId),
         supabase.from("sales").select("*").eq("store_id", currentStoreId).order("date_of_sale", { ascending: false }),
         supabase.from("stores").select("store_name").eq("id", currentStoreId).maybeSingle(),
@@ -194,7 +210,11 @@ const SupplierReports = ({ currentStoreId, onBack }: SupplierReportsProps) => {
     }));
     const productRows = [...products.values()];
     const restockProducts = owned.filter(item => Number(item.quantity || 0) <= Number(item.min_stock_level || 0)).map(item => String(item.product_name || item.productName || "")).filter(Boolean);
-    return { ...supplier, items: productRows.reduce((sum, p) => sum + p.quantity, 0), sales: productRows.reduce((sum, p) => sum + p.sales, 0), cost: productRows.reduce((sum, p) => sum + p.cost, 0), fee: money(fees[supplier.id]), sent: !!sent[supplier.id], products: productRows, restockProducts };
+    const salesTotal = productRows.reduce((sum, p) => sum + p.sales, 0);
+    // The input is a percentage of sales, so the currency fee is derived here and
+    // every total/print path can keep using `fee` unchanged.
+    const brandFeePct = Math.min(Math.max(money(fees[supplier.id]), 0), 100);
+    return { ...supplier, items: productRows.reduce((sum, p) => sum + p.quantity, 0), sales: salesTotal, cost: productRows.reduce((sum, p) => sum + p.cost, 0), fee: salesTotal * brandFeePct / 100, brandFeePct, sent: !!sent[supplier.id], products: productRows, restockProducts };
   }), [suppliers, inventory, sales, month, fees, sent]);
 
   const activeReports = reports.filter(r => r.items > 0);
@@ -209,31 +229,196 @@ const SupplierReports = ({ currentStoreId, onBack }: SupplierReportsProps) => {
   const reportHtml = (report: ReportRow) => {
     const rows = report.products.map((p, index) => `<tr><td>${index + 1}</td><td>${p.name}</td><td>${p.quantity}</td><td>${fmtCurrency(p.cost / Math.max(p.quantity, 1))}</td><td>${fmtCurrency(p.sales)}</td></tr>`).join("") || `<tr><td></td><td>No sales recorded for this period</td><td>0</td><td>${fmtCurrency(0)}</td><td>${fmtCurrency(0)}</td></tr>`;
     const logo = template.logoDataUrl ? `<img class="logo" src="${template.logoDataUrl}" alt="Company logo" />` : `<div class="logo-mark">✦</div>`;
-    return `<div class="page" style="--navy:${template.navy};--accent:${template.accent}"><div class="top-band"></div><header class="header"><div class="brand">${logo}<div class="company"><h1>${template.companyName}</h1><p>${template.address}</p><div class="contact"><span>✉ ${template.email}</span><span>☎ ${template.phone}</span></div></div></div><div class="brand-right"><div class="script">${template.rightBrand}</div><small>${template.rightCaption}</small></div></header><section class="title-row"><div class="title"><h2>${template.title}</h2><p>${template.subtitle}</p></div><div class="date-box"><strong>📅 Report Period:</strong><span>${month === "all" ? "All months" : month}</span></div></section><section class="info-box"><div class="info-col"><div class="info-title">🏢 ${template.companyDetailsTitle}</div><p>${template.companyName}</p><p>Tel: <span class="blue">${template.phone}</span></p><p>Email: ${template.email}</p></div><div class="info-col"><div class="supplier-field"><span class="label">Supplier Name:</span><span class="line">${report.name}</span></div><div class="supplier-field"><span class="label">Supplier Report #:</span><span>SR-${report.id.slice(0, 8).toUpperCase()}</span></div><div class="supplier-field"><span class="label">Generated:</span><span>${new Date().toLocaleDateString()}</span></div></div></section><table><thead><tr><th>#</th><th>Description</th><th>Quantity</th><th>Unit Cost</th><th>Total Sales</th></tr></thead><tbody>${rows}</tbody></table><section class="totals"><div class="total-line"><strong>Items sold</strong><span>${report.items}</span></div><div class="total-line"><strong>Sales total</strong><span>${fmtCurrency(report.sales)}</span></div><div class="total-line"><strong>Cost price</strong><span>${fmtCurrency(report.cost)}</span></div><div class="total-line"><strong>Fee</strong><span>${fmtCurrency(report.fee)}</span></div><div class="grand"><span>Grand Total</span><span>${fmtCurrency(report.sales + report.fee)}</span></div></section><section class="bottom"><div class="thanks"><strong>${template.thankYou}</strong>We appreciate your continued partnership.</div><div class="signature"><div class="sign">${template.signature}</div><div class="rule">${template.companyName}</div></div></section><div class="footer-wave"></div><div class="footer-text">${template.footerText}</div></div>`;
+    return `<div class="page" style="--navy:${template.navy};--accent:${template.accent}"><div class="top-band"></div><header class="header"><div class="brand">${logo}<div class="company"><h1>${template.companyName}</h1><p>${template.address}</p><div class="contact"><span>✉ ${template.email}</span><span>☎ ${template.phone}</span></div></div></div><div class="brand-right"><div class="script">${template.rightBrand}</div><small>${template.rightCaption}</small></div></header><section class="title-row"><div class="title"><h2>${template.title}</h2><p>${template.subtitle}</p></div><div class="date-box"><strong>📅 Report Period:</strong><span>${month === "all" ? "All months" : month}</span></div></section><section class="info-box"><div class="info-col"><div class="info-title">🏢 ${template.companyDetailsTitle}</div><p>${template.companyName}</p><p>Tel: <span class="blue">${template.phone}</span></p><p>Email: ${template.email}</p></div><div class="info-col"><div class="supplier-field"><span class="label">Supplier Name:</span><span class="line">${report.name}</span></div>${report.company ? `<div class="supplier-field"><span class="label">Company:</span><span class="line">${report.company}</span></div>` : ""}${report.phone ? `<div class="supplier-field"><span class="label">Tel:</span><span>${report.phone}</span></div>` : ""}${report.email ? `<div class="supplier-field"><span class="label">Email:</span><span>${report.email}</span></div>` : ""}${report.address ? `<div class="supplier-field"><span class="label">Address:</span><span>${report.address}</span></div>` : ""}<div class="supplier-field"><span class="label">Supplier Report #:</span><span>SR-${report.id.slice(0, 8).toUpperCase()}</span></div><div class="supplier-field"><span class="label">Created:</span><span>${new Date().toLocaleDateString()}</span></div></div></section><table><thead><tr><th>#</th><th>Description</th><th>Quantity</th><th>Unit Cost</th><th>Total Sales</th></tr></thead><tbody>${rows}</tbody></table><section class="totals"><div class="total-line"><strong>Items sold</strong><span>${report.items}</span></div><div class="total-line"><strong>Sales total</strong><span>${fmtCurrency(report.sales)}</span></div><div class="total-line"><strong>Cost price</strong><span>${fmtCurrency(report.cost)}</span></div><div class="total-line"><strong>Brand Fee (${report.brandFeePct}%)</strong><span>${fmtCurrency(report.fee)}</span></div><div class="grand"><span>Grand Total</span><span>${fmtCurrency(report.sales + report.fee)}</span></div></section><section class="bottom"><div class="thanks"><strong>${template.thankYou}</strong>We appreciate your continued partnership.</div><div class="signature"><div class="sign">${template.signature}</div><div class="rule">${template.companyName}</div></div></section><div class="footer-wave"></div><div class="footer-text">${template.footerText}</div></div>`;
   };
 
-  const reportDocument = (report: ReportRow) => `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${report.name} - ${template.title}</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;background:#e9edf2;font-family:"Segoe UI",Arial,sans-serif;color:#12345b}.page{width:210mm;min-height:297mm;margin:20px auto;background:#fff;position:relative;overflow:hidden;padding:10mm 10mm 13mm;box-shadow:0 8px 30px rgba(0,0,0,.12)}.top-band{position:absolute;top:-38mm;right:-18mm;width:105mm;height:58mm;background:var(--navy);border-radius:0 0 0 100%;border-bottom:3px solid var(--accent);transform:rotate(-3deg)}.top-band:after{content:"";position:absolute;left:-10mm;bottom:-3px;width:120mm;height:3px;background:var(--accent)}.header{display:flex;justify-content:space-between;align-items:flex-start;position:relative;z-index:2;min-height:34mm}.brand{display:flex;align-items:flex-start;gap:8px}.logo,.logo-mark{width:25mm;height:25mm;margin-top:1mm;object-fit:contain}.logo-mark{display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:34px}.company h1{margin:0;font-size:23px;letter-spacing:.2px;color:var(--navy)}.company p{margin:3px 0;font-size:11px;color:#315070}.contact{display:flex;gap:18px;margin-top:5px;font-size:10px}.contact span{white-space:nowrap}.brand-right{color:white;text-align:right;padding:7mm 4mm 0 0;width:62mm;position:relative;z-index:3}.brand-right .script{font-family:"Brush Script MT","Segoe Script",cursive;font-size:17px}.brand-right small{display:block;margin-top:5px;font-size:7px;letter-spacing:2px}.title-row{display:flex;justify-content:space-between;align-items:center;margin-top:5mm;border-bottom:1px solid var(--accent);padding-bottom:5mm}.title h2{margin:0;font-size:27px;color:var(--navy);letter-spacing:.3px}.title p{margin:4px 0 0;font-size:11px;color:#536b83}.date-box{background:#fff6e3;border-radius:10px;padding:9px 14px;min-width:64mm;border:1px solid #f0dfb7}.date-box strong{display:block;font-size:10px;margin-bottom:4px}.date-box span{font-size:12px;font-weight:700}.info-box{margin-top:7mm;padding:7mm;background:linear-gradient(90deg,#f2f7fc,#fbfdff);border-radius:10px;display:grid;grid-template-columns:1fr 1fr;gap:10mm}.info-col+.info-col{border-left:1px solid #b9c9d8;padding-left:10mm}.info-title{font-weight:800;font-size:13px;margin-bottom:6px}.info-col p{margin:4px 0;font-size:11px}.label{font-weight:800;color:var(--navy)}.supplier-field{display:grid;grid-template-columns:36mm 1fr;margin:6px 0;font-size:11px}.line{border-bottom:1px solid #9eb1c3;min-height:16px}.blue{color:#1767c2}table{width:100%;border-collapse:collapse;margin-top:7mm;font-size:10.5px}thead th{background:var(--navy);color:#fff;padding:9px 8px;text-align:left;font-size:10px}thead th:first-child{width:10mm;text-align:center}tbody td{height:11mm;padding:7px 8px;border:1px solid #d5e0ea;color:#183a5c}tbody tr:nth-child(even) td{background:#f5f8fb}tbody td:first-child,tbody td:nth-child(3){text-align:center}tbody td:nth-child(4),tbody td:nth-child(5){text-align:right;white-space:nowrap}.totals{width:47%;margin-left:auto;margin-top:5mm;background:#f4f8fc;border-radius:9px;padding:4mm 5mm 0}.total-line{display:flex;justify-content:space-between;padding:6px 0;font-size:11px}.grand{margin:4px -5mm 0;padding:10px 5mm;background:#fff0c9;border-top:1px solid var(--accent);border-radius:8px;display:flex;justify-content:space-between;font-weight:900;font-size:17px;color:var(--navy)}.bottom{display:flex;justify-content:space-between;align-items:flex-end;margin-top:7mm}.thanks{max-width:105mm;border-left:2px solid var(--accent);padding-left:8px;font-size:11px;line-height:1.45;font-style:italic}.thanks strong{display:block;font-size:13px;margin-bottom:3px}.signature{text-align:right;min-width:55mm}.signature .sign{font-family:"Brush Script MT","Segoe Script",cursive;font-size:20px;margin-bottom:4px}.signature .rule{border-top:1px solid #60778d;padding-top:5px;font-weight:700;font-size:10px}.footer-wave{position:absolute;bottom:-28mm;left:-10mm;width:230mm;height:55mm;background:var(--navy);border-radius:50% 50% 0 0 / 45% 45% 0 0;border-top:4px solid var(--accent)}.footer-text{position:absolute;bottom:5mm;left:12mm;z-index:4;color:white;font-size:8px;letter-spacing:2px}@media print{body{background:white}.page{margin:0;box-shadow:none}}</style></head><body>${reportHtml(report)}</body></html>`;
+  const reportDocument = (report: ReportRow, opts?: { fit?: boolean }) => `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${report.name} - ${template.title}</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;background:#e9edf2;font-family:"Segoe UI",Arial,sans-serif;color:#12345b}.page{width:210mm;min-height:297mm;margin:20px auto;background:#fff;position:relative;overflow:hidden;padding:10mm 10mm 13mm;box-shadow:0 8px 30px rgba(0,0,0,.12)}.top-band{position:absolute;top:-38mm;right:-18mm;width:105mm;height:58mm;background:var(--navy);border-radius:0 0 0 100%;border-bottom:3px solid var(--accent);transform:rotate(-3deg)}.top-band:after{content:"";position:absolute;left:-10mm;bottom:-3px;width:120mm;height:3px;background:var(--accent)}.header{display:flex;justify-content:space-between;align-items:flex-start;position:relative;z-index:2;min-height:34mm}.brand{display:flex;align-items:flex-start;gap:8px}.logo,.logo-mark{width:25mm;height:25mm;margin-top:1mm;object-fit:contain}.logo-mark{display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:34px}.company h1{margin:0;font-size:23px;letter-spacing:.2px;color:var(--navy)}.company p{margin:3px 0;font-size:11px;color:#315070}.contact{display:flex;gap:18px;margin-top:5px;font-size:10px}.contact span{white-space:nowrap}.brand-right{color:white;text-align:right;padding:7mm 4mm 0 0;width:62mm;position:relative;z-index:3}.brand-right .script{font-family:"Brush Script MT","Segoe Script",cursive;font-size:17px}.brand-right small{display:block;margin-top:5px;font-size:7px;letter-spacing:2px}.title-row{display:flex;justify-content:space-between;align-items:center;margin-top:5mm;border-bottom:1px solid var(--accent);padding-bottom:5mm}.title h2{margin:0;font-size:27px;color:var(--navy);letter-spacing:.3px}.title p{margin:4px 0 0;font-size:11px;color:#536b83}.date-box{background:#fff6e3;border-radius:10px;padding:9px 14px;min-width:64mm;border:1px solid #f0dfb7}.date-box strong{display:block;font-size:10px;margin-bottom:4px}.date-box span{font-size:12px;font-weight:700}.info-box{margin-top:7mm;padding:7mm;background:linear-gradient(90deg,#f2f7fc,#fbfdff);border-radius:10px;display:grid;grid-template-columns:1fr 1fr;gap:10mm}.info-col+.info-col{border-left:1px solid #b9c9d8;padding-left:10mm}.info-title{font-weight:800;font-size:13px;margin-bottom:6px}.info-col p{margin:4px 0;font-size:11px}.label{font-weight:800;color:var(--navy)}.supplier-field{display:grid;grid-template-columns:36mm 1fr;margin:6px 0;font-size:11px}.line{border-bottom:1px solid #9eb1c3;min-height:16px}.blue{color:#1767c2}table{width:100%;border-collapse:collapse;margin-top:7mm;font-size:10.5px}thead th{background:var(--navy);color:#fff;padding:9px 8px;text-align:left;font-size:10px}thead th:first-child{width:10mm;text-align:center}tbody td{height:11mm;padding:7px 8px;border:1px solid #d5e0ea;color:#183a5c}tbody tr:nth-child(even) td{background:#f5f8fb}tbody td:first-child,tbody td:nth-child(3){text-align:center}tbody td:nth-child(4),tbody td:nth-child(5){text-align:right;white-space:nowrap}.totals{width:47%;margin-left:auto;margin-top:5mm;background:#f4f8fc;border-radius:9px;padding:4mm 5mm 0}.total-line{display:flex;justify-content:space-between;padding:6px 0;font-size:11px}.grand{margin:4px -5mm 0;padding:10px 5mm;background:#fff0c9;border-top:1px solid var(--accent);border-radius:8px;display:flex;justify-content:space-between;font-weight:900;font-size:17px;color:var(--navy)}.bottom{display:flex;justify-content:space-between;align-items:flex-end;margin-top:7mm}.thanks{max-width:105mm;border-left:2px solid var(--accent);padding-left:8px;font-size:11px;line-height:1.45;font-style:italic}.thanks strong{display:block;font-size:13px;margin-bottom:3px}.signature{text-align:right;min-width:55mm}.signature .sign{font-family:"Brush Script MT","Segoe Script",cursive;font-size:20px;margin-bottom:4px}.signature .rule{border-top:1px solid #60778d;padding-top:5px;font-weight:700;font-size:10px}.footer-wave{position:absolute;bottom:-28mm;left:-10mm;width:230mm;height:55mm;background:var(--navy);border-radius:50% 50% 0 0 / 45% 45% 0 0;border-top:4px solid var(--accent)}.footer-text{position:absolute;bottom:5mm;left:12mm;z-index:4;color:white;font-size:8px;letter-spacing:2px}@media print{body{background:white}.page{margin:0;box-shadow:none}}</style></head><body>${reportHtml(report)}${opts?.fit ? `<script>(function(){var page=document.querySelector(".page");if(!page)return;var fit=function(){var w=page.offsetWidth;if(!w)return;var z=Math.min(1,(document.documentElement.clientWidth-4)/w);page.style.zoom=z;try{parent.postMessage({type:"zuri-supplier-report",height:Math.ceil(page.offsetHeight)},"*")}catch(e){}};if(document.readyState==="complete")fit();else window.addEventListener("load",fit);window.addEventListener("resize",fit);})();</script>` : ""}</body></html>`;
 
-  const performPrint = (rows: ReportRow[]) => {
-    const win = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
-    if (!win) { toast({ title: "Allow popups to generate the PDF", variant: "destructive" }); return; }
-    win.document.write(rows.map(reportDocument).join("<div style='page-break-after:always'></div>")); win.document.close(); win.focus(); win.print();
+  // Printing via a hidden iframe rather than window.open: browsers block pop-ups
+// that are not tied to a user gesture, so a blocked window.open meant no file at
+// all and left the user staring at the "allow popups" prompt. An iframe is not
+// subject to the pop-up blocker, so the download/print always works.
+const printViaIframe = (html: string) => {
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.setAttribute("title", "report-print");
+  frame.style.position = "fixed";
+  // Hide it off-screen with real dimensions. A 0x0 iframe has no layout
+  // viewport, so print() emits a blank page or nothing at all.
+  frame.style.left = "-10000px";
+  frame.style.top = "0";
+  frame.style.width = "794px";
+  frame.style.height = "1123px";
+  frame.style.border = "0";
+  document.body.appendChild(frame);
+  let cleaned = false;
+  const cleanup = () => { if (cleaned) return; cleaned = true; try { frame.remove(); } catch {} };
+  frame.onload = () => {
+    const view = frame.contentWindow;
+    if (!view) { cleanup(); return; }
+    // Tear down only once printing finishes: removing the frame while the
+    // dialog is still open aborts the job.
+    try { view.addEventListener("afterprint", cleanup, { once: true }); } catch {}
+    try {
+      view.focus();
+      view.print();
+    } catch {
+      toast({ title: "Could not open the print dialog", description: "Your browser blocked printing. Use the PDF button to save the file instead.", variant: "destructive" });
+      cleanup();
+    }
+    window.setTimeout(cleanup, 60000);
   };
+  frame.srcdoc = html;
+  // Safety net in case onload never fires.
+  window.setTimeout(cleanup, 60000);
+};
+
+// Saving the generated document as a file instead of relying on the print
+// dialog: the print path depends on the browser printing a document built in
+// memory, which silently produced nothing. A Blob download always yields a file.
+const reportFileName = (label: string, extension: "html" | "pdf" = "html") => {
+  const slug = label.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "supplier-report";
+  return `${slug}.${extension}`;
+};
+const downloadAsFile = (html: string, label: string) => {
+  try {
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = reportFileName(label);
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+    toast({ title: "Report downloaded", description: link.download, variant: "default" });
+  } catch {
+    toast({ title: "Could not download the report", variant: "destructive" });
+  }
+};
+
+// A4 in millimetres, matching the @page rule in the report templates.
+const PDF_WIDTH = 210;
+const PDF_HEIGHT = 297;
+const PDF_MARGIN = 8;
+// Rasterisation scale for the exported page. 3x renders the A4 text area at
+// about 310 DPI, which keeps the template's 11px table text crisp.
+const PDF_SCALE = 3;
+
+// Renders a report document to a real multi-page A4 PDF. jsPDF and html2canvas
+// are imported dynamically so they stay out of the bundle for POS sessions that
+// never export a report. Returns false when the render produced a blank canvas,
+// so the caller can fall back to saving the HTML instead.
+const renderReportPdf = async (html: string, filename: string) => {
+  const [{ jsPDF }, { default: html2canvas }] = await Promise.all([import("jspdf"), import("html2canvas")]);
+
+  // A4 at 96dpi. The template is authored in mm, so this width makes the layout
+  // land on the same page breaks the browser would use.
+  const host = document.createElement("div");
+  host.setAttribute("aria-hidden", "true");
+  host.style.cssText = "position:fixed;left:-20000px;top:0;width:794px;background:#fff;z-index:-1;";
+  document.body.appendChild(host);
+
+  try {
+    // A full document assigned via innerHTML keeps its <head> styles; the
+    // browser hoists them into the host.
+    host.innerHTML = html;
+    await new Promise<void>((resolve) => {
+      if (host.querySelector("style")) resolve();
+      else if (document.readyState === "complete") resolve();
+      else window.addEventListener("load", () => resolve(), { once: true });
+    });
+
+    const target = host.querySelector<HTMLElement>(".page") ?? (host.firstElementChild as HTMLElement | null) ?? host;
+    const canvas = await html2canvas(target, {
+      // 3x puts the A4 text area at roughly 310 DPI. At 2x the 11px table text
+      // was legible but soft, which is what made the PDF look faint.
+      scale: PDF_SCALE,
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      logging: false,
+      width: 794,
+      windowWidth: 794,
+      scrollX: 0,
+      scrollY: 0,
+    });
+    if (!canvas.width || !canvas.height) return false;
+
+    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
+    const contentWidth = PDF_WIDTH - PDF_MARGIN * 2;
+    const contentHeight = PDF_HEIGHT - PDF_MARGIN * 2;
+    const pxPerMm = canvas.width / contentWidth;
+    const pageHeightPx = Math.floor(contentHeight * pxPerMm);
+    const pages = Math.max(1, Math.ceil(canvas.height / pageHeightPx));
+
+    for (let page = 0; page < pages; page += 1) {
+      const sliceHeight = Math.min(pageHeightPx, canvas.height - page * pageHeightPx);
+      const slice = document.createElement("canvas");
+      slice.width = canvas.width;
+      slice.height = sliceHeight;
+      const ctx = slice.getContext("2d");
+      if (!ctx) return false;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, slice.width, slice.height);
+      ctx.drawImage(canvas, 0, page * pageHeightPx, canvas.width, sliceHeight, 0, 0, canvas.width, sliceHeight);
+
+      if (page > 0) pdf.addPage();
+      // PNG, not JPEG: lossy compression rings around glyph edges and is what
+      // made small table text look blurred. Pages are mostly white, so lossless
+      // still compresses well once jsPDF flate-encodes the stream.
+      pdf.addImage(slice.toDataURL("image/png"), "PNG", PDF_MARGIN, PDF_MARGIN, contentWidth, sliceHeight / pxPerMm);
+    }
+
+    pdf.save(filename);
+    return true;
+  } finally {
+    try { host.remove(); } catch {}
+  }
+};
+
+// Produces a real PDF, falling back to the HTML file if the canvas render comes
+// back blank or the libraries fail to load, so an export is never a dead click.
+const exportReport = async (html: string, label: string) => {
+  if (exporting) return;
+  setExporting(true);
+  try {
+    const saved = await renderReportPdf(html, reportFileName(label, "pdf"));
+    if (saved) {
+      toast({ title: "PDF saved", description: reportFileName(label, "pdf"), variant: "default" });
+    } else {
+      downloadAsFile(html, label);
+    }
+  } catch {
+    downloadAsFile(html, label);
+  } finally {
+    setExporting(false);
+  }
+};
+
+const performPrint = (rows: ReportRow[]) => {
+  printViaIframe(rows.map(r => reportDocument(r)).join("<div style='page-break-after:always'></div>"));
+};
   const combinedReportDocument = (rows: ReportRow[]) => {
     const totalItems = rows.reduce((sum, row) => sum + row.items, 0);
     const totalSales = rows.reduce((sum, row) => sum + row.sales, 0);
     const totalCost = rows.reduce((sum, row) => sum + row.cost, 0);
     const totalFees = rows.reduce((sum, row) => sum + row.fee, 0);
     const body = rows.map((row, index) => `<tr><td>${index + 1}</td><td>${row.name}</td><td>${row.items.toLocaleString()}</td><td>${fmtCurrency(row.sales)}</td><td>${fmtCurrency(row.cost)}</td><td>${fmtCurrency(row.fee)}</td><td>${fmtCurrency(row.sales + row.fee)}</td></tr>`).join("") || `<tr><td colspan="7">No sales recorded for this period.</td></tr>`;
-    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${template.title} - All suppliers</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;background:#e9edf2;font-family:"Segoe UI",Arial,sans-serif;color:#12345b}.page{width:210mm;min-height:297mm;margin:20px auto;background:#fff;padding:18mm;box-shadow:0 8px 30px rgba(0,0,0,.12)}header{display:flex;justify-content:space-between;border-bottom:3px solid ${template.accent};padding-bottom:12px}h1{margin:0;color:${template.navy};font-size:25px}h2{margin:24px 0 4px;color:${template.navy}}p{color:#536b83}table{width:100%;border-collapse:collapse;margin-top:24px;font-size:11px}th{background:${template.navy};color:#fff;text-align:left;padding:9px}td{padding:9px;border:1px solid #d5e0ea}tbody tr:nth-child(even){background:#f5f8fb}.right{text-align:right}.totals{margin:24px 0 0 auto;width:55%;background:#f4f8fc;padding:12px}.totals div{display:flex;justify-content:space-between;padding:6px 0}.grand{font-size:18px;font-weight:800;border-top:2px solid ${template.accent};color:${template.navy}}@media print{body{background:#fff}.page{margin:0;box-shadow:none}}</style></head><body><main class="page"><header><div><h1>${template.companyName}</h1><p>${template.address} · ${template.phone}</p></div><div><strong>${template.rightBrand}</strong><p>${template.title}</p></div></header><h2>Combined Supplier Sales Report</h2><p>All suppliers · ${month === "all" ? "All months" : month} · Generated ${new Date().toLocaleDateString()}</p><table><thead><tr><th>#</th><th>Supplier</th><th>Items sold</th><th>Sales</th><th>Cost</th><th>Fee</th><th>Total</th></tr></thead><tbody>${body}</tbody></table><section class="totals"><div><strong>Suppliers</strong><span>${rows.length}</span></div><div><strong>Items sold</strong><span>${totalItems.toLocaleString()}</span></div><div><strong>Sales total</strong><span>${fmtCurrency(totalSales)}</span></div><div><strong>Cost price</strong><span>${fmtCurrency(totalCost)}</span></div><div><strong>Fees</strong><span>${fmtCurrency(totalFees)}</span></div><div class="grand"><strong>Grand total</strong><span>${fmtCurrency(totalSales + totalFees)}</span></div></section></main></body></html>`;
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${template.title} - All suppliers</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;background:#e9edf2;font-family:"Segoe UI",Arial,sans-serif;color:#12345b}.page{width:210mm;min-height:297mm;margin:20px auto;background:#fff;padding:18mm;box-shadow:0 8px 30px rgba(0,0,0,.12)}header{display:flex;justify-content:space-between;border-bottom:3px solid ${template.accent};padding-bottom:12px}h1{margin:0;color:${template.navy};font-size:25px}h2{margin:24px 0 4px;color:${template.navy}}p{color:#536b83}table{width:100%;border-collapse:collapse;margin-top:24px;font-size:11px}th{background:${template.navy};color:#fff;text-align:left;padding:9px}td{padding:9px;border:1px solid #d5e0ea}tbody tr:nth-child(even){background:#f5f8fb}.right{text-align:right}.totals{margin:24px 0 0 auto;width:55%;background:#f4f8fc;padding:12px}.totals div{display:flex;justify-content:space-between;padding:6px 0}.grand{font-size:18px;font-weight:800;border-top:2px solid ${template.accent};color:${template.navy}}@media print{body{background:#fff}.page{margin:0;box-shadow:none}}</style></head><body><main class="page"><header><div><h1>${template.companyName}</h1><p>${template.address} · ${template.phone}</p></div><div><strong>${template.rightBrand}</strong><p>${template.title}</p></div></header><h2>Combined Supplier Sales Report</h2><p>All suppliers · ${month === "all" ? "All months" : month} · Created ${new Date().toLocaleDateString()}</p><table><thead><tr><th>#</th><th>Supplier</th><th>Items sold</th><th>Sales</th><th>Cost</th><th>Brand Fee</th><th>Total</th></tr></thead><tbody>${body}</tbody></table><section class="totals"><div><strong>Suppliers</strong><span>${rows.length}</span></div><div><strong>Items sold</strong><span>${totalItems.toLocaleString()}</span></div><div><strong>Sales total</strong><span>${fmtCurrency(totalSales)}</span></div><div><strong>Cost price</strong><span>${fmtCurrency(totalCost)}</span></div><div><strong>Fees</strong><span>${fmtCurrency(totalFees)}</span></div><div class="grand"><strong>Grand total</strong><span>${fmtCurrency(totalSales + totalFees)}</span></div></section></main></body></html>`;
   };
-  const performCombinedPrint = (rows: ReportRow[]) => {
-    const win = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
-    if (!win) { toast({ title: "Allow popups to generate the report", variant: "destructive" }); return; }
-    win.document.write(combinedReportDocument(rows)); win.document.close(); win.focus(); win.print();
+  const downloadCombinedReport = () => {
+    const selected = reports.filter(r => selection[r.id]);
+    const rows = selected.length ? selected : reports;
+    if (!rows.length) { toast({ title: "No suppliers to download", variant: "destructive" }); return; }
+    void exportReport(combinedReportDocument(rows), `Supplier report - ${month === "all" ? "All months" : month}`);
   };
-  const printCombinedReport = () => { const selected = reports.filter(r => selection[r.id]); setPendingPrintReports(selected.length ? selected : reports); setPopupRequest("combined"); };
-  const printReport = (report?: ReportRow) => { if (!report) { printCombinedReport(); return; } setPendingPrintReports([report]); setPopupRequest("print"); };
+  const downloadReport = (report: ReportRow) => void exportReport(reportDocument(report), `${report.name} - ${month === "all" ? "All months" : month}`);
+  const printReport = (report: ReportRow) => performPrint([report]);
+  const printAllReports = () => {
+    const selected = reports.filter(r => selection[r.id]);
+    performPrint(selected.length ? selected : reports);
+  };
   const openEmailDialog = (preset?: "made" | "none") => { setSelection(Object.fromEntries(reports.filter(r => preset === "made" ? r.items > 0 : preset === "none" ? r.items === 0 : !!r.email).map(r => [r.id, true]))); setRestockSelection(Object.fromEntries(reports.filter(r => r.restockProducts.length > 0 && r.email).map(r => [r.id, true]))); setEmailOpen(true); };
   const emailDraftUrl = (link: string, to: string, subject: string, body: string) => {
     if (link.trim().toLowerCase().startsWith("mailto:")) {
@@ -256,13 +441,11 @@ const SupplierReports = ({ currentStoreId, onBack }: SupplierReportsProps) => {
   };
 
   const confirmPopupRequest = () => {
-    if (popupRequest === "print") performPrint(pendingPrintReports);
-    if (popupRequest === "combined") performCombinedPrint(pendingPrintReports);
     if (popupRequest === "email") {
       pendingEmailTargets.forEach(r => {
         if (attachOnSend) performPrint([r]);
         const subject = `Supplier sales report — ${month === "all" ? "All months" : month}`;
-        const body = message.split("{supplier}").join(r.name) + `\n\nItems sold: ${r.items}\nSales: ${fmtCurrency(r.sales)}\nCost price: ${fmtCurrency(r.cost)}\nFee: ${fmtCurrency(r.fee)}\n\n${attachOnSend ? "The supplier report has been opened for Print / Save as PDF. Please attach that PDF to this draft." : "Please attach the supplier report if required."}`;
+        const body = message.split("{supplier}").join(r.name) + `\n\nItems sold: ${r.items}\nSales: ${fmtCurrency(r.sales)}\nCost price: ${fmtCurrency(r.cost)}\nBrand fee (${r.brandFeePct}%): ${fmtCurrency(r.fee)}\n\n${attachOnSend ? "The supplier report has been opened for Print / Save as PDF. Please attach that PDF to this draft." : "Please attach the supplier report if required."}`;
         const to = r.email || "";
         const url = emailDraftUrl(emailProviderLinks[emailProvider], to, subject, body);
         window.open(url, "_blank");
@@ -282,15 +465,15 @@ const SupplierReports = ({ currentStoreId, onBack }: SupplierReportsProps) => {
   if (showLoader) return <PageLoader text="Loading supplier reports..." />;
 
   return <div className="flex h-full flex-col space-y-6 animate-in fade-in duration-500"><EmailProviderLinkSettings provider={emailProvider} link={emailProviderLinks[emailProvider]} onProviderChange={setEmailProvider} onLinkChange={link => setEmailProviderLinks(current => ({ ...current, [emailProvider]: link }))} onSave={saveEmailProviderLinks} />
-     <div className="flex justify-between items-center flex-wrap gap-3"><div className="flex items-start gap-3"><Button variant="ghost" size="icon" onClick={onBack} aria-label="Back"><ArrowLeft className="h-5 w-5" /></Button><div><h2 className="text-3xl font-bold flex items-center gap-3"><BarChart3 className="h-8 w-8 text-primary" />Supplier Reports</h2><p className="text-muted-foreground mt-1">Review supplier sales, item movement, cost price, fees, and email-ready reports.</p></div></div><div className="flex gap-2 flex-wrap"><Select value={month} onValueChange={setMonth}><SelectTrigger className="w-[150px]"><SelectValue placeholder="Period" /></SelectTrigger><SelectContent><SelectItem value="all">All months</SelectItem>{months.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select><Button variant="outline" size="sm" onClick={() => setTemplateOpen(true)}><Settings2 className="mr-2 h-4 w-4" />Edit template</Button><Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button><Button variant="outline" size="sm" onClick={() => printReport()}><Download className="mr-2 h-4 w-4" />Download all PDFs</Button><Button size="sm" onClick={() => openEmailDialog()}><Mail className="mr-2 h-4 w-4" />Draft all emails</Button></div></div>
+     <div className="flex justify-between items-center flex-wrap gap-3"><div className="flex items-start gap-3"><Button variant="ghost" size="icon" onClick={onBack} aria-label="Back"><ArrowLeft className="h-5 w-5" /></Button><div><h2 className="text-3xl font-bold flex items-center gap-3"><BarChart3 className="h-8 w-8 text-primary" />Supplier Reports</h2><p className="text-muted-foreground mt-1">Review supplier sales, item movement, cost price, fees, and email-ready reports.</p></div></div><div className="flex gap-2 flex-wrap"><Select value={month} onValueChange={setMonth}><SelectTrigger className="w-[150px]"><SelectValue placeholder="Period" /></SelectTrigger><SelectContent><SelectItem value="all">All months</SelectItem>{months.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select><Button variant="outline" size="sm" onClick={() => setTemplateOpen(true)}><Settings2 className="mr-2 h-4 w-4" />Edit template</Button><Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button><Button variant="outline" size="sm" onClick={() => printAllReports()}><Printer className="mr-2 h-4 w-4" />Print all</Button><Button variant="outline" size="sm" onClick={() => downloadCombinedReport()} disabled={exporting}><Download className="mr-2 h-4 w-4" />{exporting ? "Building PDF..." : "Download all PDFs"}</Button><Button size="sm" onClick={() => openEmailDialog()}><Mail className="mr-2 h-4 w-4" />Draft all emails</Button></div></div>
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4"><StatCard label="Suppliers" value={reports.length} sub="linked suppliers" icon={Users} color="text-primary" bg="bg-primary/10" /><StatCard label="Made sales" value={activeReports.length} sub={`of ${reports.length} suppliers`} icon={Check} color="text-emerald-600" bg="bg-emerald-50 dark:bg-emerald-950" /><StatCard label="Items sold" value={activeReports.reduce((s, r) => s + r.items, 0).toLocaleString()} sub="across active suppliers" icon={BarChart3} color="text-blue-600" bg="bg-blue-50 dark:bg-blue-950" /><StatCard label="Sales value" value={fmtCurrency(activeReports.reduce((s, r) => s + r.sales, 0))} sub="selected period" icon={Download} color="text-amber-600" bg="bg-amber-50 dark:bg-amber-950" /></div>
     <div className="flex gap-2 flex-wrap"><Button variant="outline" size="sm" onClick={() => openEmailDialog("made")}><Send className="mr-2 h-4 w-4" />Email made sales</Button><Button variant="outline" size="sm" onClick={() => openEmailDialog("none")}>Email no sales</Button><Button variant="outline" size="sm" onClick={() => setRestockEditorOpen(true)}>Edit restock message</Button><Badge variant="secondary" className="px-3 py-1">{month === "all" ? "All months" : month}</Badge></div>
     <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input value={supplierQuery} onChange={e => setSupplierQuery(e.target.value)} placeholder="Search suppliers by name, email, or supplier ID..." className="pl-9" /></div>
-    <Card><CardHeader><CardTitle className="text-base">Supplier performance</CardTitle></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[820px] text-sm"><thead><tr className="border-b text-left text-muted-foreground"><th className="pb-3">Supplier</th><th className="pb-3 text-right">Items sold</th><th className="pb-3 text-right">Sales amount</th><th className="pb-3 text-right">Cost price</th><th className="pb-3 text-right">Fee</th><th className="pb-3 text-right">Status</th><th className="pb-3 text-right">Actions</th></tr></thead><tbody>{visibleReports.map(r => <tr key={r.id} className={`border-b last:border-0 ${previewSupplierId === r.id ? "bg-primary/5" : ""}`}><td className="py-3"><button className="text-left" onClick={() => setPreviewSupplierId(r.id)}><p className="font-medium hover:text-primary">{r.name}</p><p className="text-xs text-muted-foreground">{r.email || "No email"} · ID: {r.id.slice(0, 8)}</p></button></td><td className="text-right">{r.items.toLocaleString()}</td><td className="text-right font-medium">{fmtCurrency(r.sales)}</td><td className="text-right">{fmtCurrency(r.cost)}</td><td className="text-right"><Input className="ml-auto h-8 w-24 text-right" type="number" min="0" value={fees[r.id] ?? ""} placeholder="0" onChange={e => setFees(v => ({ ...v, [r.id]: e.target.value }))} /></td><td className="text-right">{r.sent ? <Badge className="bg-emerald-600"><Check className="mr-1 h-3 w-3" />Sent</Badge> : <Badge variant="outline">Not sent</Badge>}</td><td className="text-right"><Button variant="ghost" size="sm" onClick={() => { setPreviewSupplierId(r.id); setTemplateOpen(true); }}>Preview</Button><Button variant="ghost" size="sm" onClick={() => printReport(r)}><Download className="mr-1 h-4 w-4" />PDF</Button></td></tr>)}</tbody></table>{!visibleReports.length && <p className="py-10 text-center text-muted-foreground">No suppliers match this search.</p>}</CardContent></Card>
-    <Dialog open={templateOpen} onOpenChange={setTemplateOpen}><DialogContent className="max-w-6xl max-h-[95vh] overflow-y-auto"><DialogHeader><DialogTitle className="flex items-center gap-2"><Palette className="h-5 w-5 text-primary" />Edit report template</DialogTitle></DialogHeader><div className="grid gap-5 lg:grid-cols-[380px_1fr]"><div className="space-y-4"><div className="space-y-2"><Label>Preview supplier</Label><Select value={previewSupplierId || previewReport?.id || ""} onValueChange={setPreviewSupplierId}><SelectTrigger><SelectValue placeholder="Choose supplier" /></SelectTrigger><SelectContent>{reports.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>Company logo</Label><div className="flex items-center gap-3"><Input type="file" accept="image/*" onChange={handleLogo} /><Upload className="h-4 w-4 text-muted-foreground" />{template.logoDataUrl && <img src={template.logoDataUrl} alt="Logo preview" className="h-10 w-10 rounded object-contain" />}</div></div><div className="grid gap-3 sm:grid-cols-2">{([['companyName','Company name'],['address','Address'],['email','Email'],['phone','Phone'],['rightBrand','Top-right brand'],['rightCaption','Top-right caption'],['title','Report title'],['subtitle','Report subtitle'],['companyDetailsTitle','Company details heading'],['signature','Signature'],['footerText','Footer text'],['thankYou','Thank-you heading']] as const).map(([key,label]) => <div className="space-y-2" key={key}><Label>{label}</Label><Input value={template[key]} onChange={e => updateTemplate(key, e.target.value)} /></div>)}</div><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>Navy color</Label><Input type="color" value={template.navy} onChange={e => updateTemplate("navy", e.target.value)} className="h-10 p-1" /></div><div className="space-y-2"><Label>Accent color</Label><Input type="color" value={template.accent} onChange={e => updateTemplate("accent", e.target.value)} className="h-10 p-1" /></div></div><div className="flex justify-end gap-2 pt-2"><Button variant="outline" onClick={() => setTemplate(defaultTemplate)}>Reset</Button><Button onClick={saveTemplate}>Save template</Button></div></div><div className="min-h-[680px] rounded-xl border bg-muted/30 p-2"><p className="mb-2 px-2 text-xs font-medium text-muted-foreground">Live preview — edits appear here immediately</p>{previewReport ? <iframe title="Supplier report live preview" className="h-[640px] w-full rounded border bg-white" srcDoc={reportDocument(previewReport)} /> : <div className="flex h-[640px] items-center justify-center text-sm text-muted-foreground">Add suppliers to preview the report.</div>}</div></div></DialogContent></Dialog>
+    <Card><CardHeader><CardTitle className="text-base">Supplier performance</CardTitle></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[820px] text-sm"><thead><tr className="border-b text-left text-muted-foreground"><th className="pb-3">Supplier</th><th className="pb-3 text-right">Items sold</th><th className="pb-3 text-right">Sales amount</th><th className="pb-3 text-right">Cost price</th><th className="pb-3 text-right">Brand fee %</th><th className="pb-3 text-right">Status</th><th className="pb-3 text-right">Actions</th></tr></thead><tbody>{visibleReports.map(r => <tr key={r.id} className={`border-b last:border-0 ${previewSupplierId === r.id ? "bg-primary/5" : ""}`}><td className="py-3"><button className="text-left" onClick={() => setPreviewSupplierId(r.id)}><p className="font-medium hover:text-primary">{r.name}</p><p className="text-xs text-muted-foreground">{r.email || "No email"} · ID: {r.id.slice(0, 8)}</p></button></td><td className="text-right">{r.items.toLocaleString()}</td><td className="text-right font-medium">{fmtCurrency(r.sales)}</td><td className="text-right">{fmtCurrency(r.cost)}</td><td className="text-right"><div className="ml-auto flex h-8 w-28 items-center overflow-hidden rounded-md border bg-background focus-within:ring-2 focus-within:ring-ring"><Input className="h-full w-full border-0 text-right shadow-none focus-visible:ring-0 focus-visible:ring-offset-0" type="number" inputMode="decimal" min="0" max="100" step="0.01" value={fees[r.id] ?? ""} placeholder="0" onChange={e => setFees(v => ({ ...v, [r.id]: e.target.value }))} aria-label={`Brand fee percentage for ${r.name}`} /><span className="shrink-0 pr-2 text-xs text-muted-foreground">%</span></div></td><td className="text-right">{r.sent ? <Badge className="bg-emerald-600"><Check className="mr-1 h-3 w-3" />Sent</Badge> : <Badge variant="outline">Not sent</Badge>}</td><td className="text-right"><Button variant="ghost" size="sm" onClick={() => { setPreviewSupplierId(r.id); setTemplateOpen(true); }}>Preview</Button><Button variant="ghost" size="sm" onClick={() => printReport(r)}><Printer className="mr-1 h-4 w-4" />Print</Button><Button variant="ghost" size="sm" onClick={() => downloadReport(r)} disabled={exporting}><Download className="mr-1 h-4 w-4" />{exporting ? "..." : "PDF"}</Button></td></tr>)}</tbody></table>{!visibleReports.length && <p className="py-10 text-center text-muted-foreground">No suppliers match this search.</p>}</CardContent></Card>
+    <Dialog open={templateOpen} onOpenChange={setTemplateOpen}><DialogContent className="max-w-6xl max-h-[95vh] overflow-y-auto"><DialogHeader><DialogTitle className="flex items-center gap-2"><Palette className="h-5 w-5 text-primary" />Edit report template</DialogTitle></DialogHeader><div className="grid gap-5 lg:grid-cols-[380px_1fr]"><div className="space-y-4"><div className="space-y-2"><Label>Preview supplier</Label><Select value={previewSupplierId || previewReport?.id || ""} onValueChange={setPreviewSupplierId}><SelectTrigger><SelectValue placeholder="Choose supplier" /></SelectTrigger><SelectContent>{reports.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>Company logo</Label><div className="flex items-center gap-3"><Input type="file" accept="image/*" onChange={handleLogo} /><Upload className="h-4 w-4 text-muted-foreground" />{template.logoDataUrl && <img src={template.logoDataUrl} alt="Logo preview" className="h-10 w-10 rounded object-contain" />}</div></div><div className="grid gap-3 sm:grid-cols-2">{([['companyName','Company name'],['address','Address'],['email','Email'],['phone','Phone'],['rightBrand','Top-right brand'],['rightCaption','Top-right caption'],['title','Report title'],['subtitle','Report subtitle'],['companyDetailsTitle','Company details heading'],['signature','Signature'],['footerText','Footer text'],['thankYou','Thank-you heading']] as const).map(([key,label]) => <div className="space-y-2" key={key}><Label>{label}</Label><Input value={template[key]} onChange={e => updateTemplate(key, e.target.value)} /></div>)}</div><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>Navy color</Label><Input type="color" value={template.navy} onChange={e => updateTemplate("navy", e.target.value)} className="h-10 p-1" /></div><div className="space-y-2"><Label>Accent color</Label><Input type="color" value={template.accent} onChange={e => updateTemplate("accent", e.target.value)} className="h-10 p-1" /></div></div><div className="flex justify-end gap-2 pt-2"><Button variant="outline" onClick={() => setTemplate(defaultTemplate)}>Reset</Button><Button onClick={saveTemplate}>Save template</Button></div></div><div className="rounded-xl border bg-muted/30 p-2"><p className="mb-2 px-2 text-xs font-medium text-muted-foreground">Live preview — edits appear here immediately</p>{previewReport ? <iframe title="Supplier report live preview" className="w-full rounded border bg-white" style={{ height: previewHeight }} srcDoc={reportDocument(previewReport, { fit: true })} /> : <div className="flex items-center justify-center text-sm text-muted-foreground" style={{ height: previewHeight }}>Add suppliers to preview the report.</div>}</div></div></DialogContent></Dialog>
     <Dialog open={emailOpen} onOpenChange={setEmailOpen}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Draft supplier messages</DialogTitle></DialogHeader><div className="space-y-4"><p className="text-sm text-muted-foreground">Select vendors and choose where to draft their messages. Gmail or Outlook will open login/compose when needed; Device mail uses the computer’s default mail handler.</p><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>Email provider</Label><Select value={emailProvider} onValueChange={v => setEmailProvider(v as typeof emailProvider)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="gmail">Gmail</SelectItem><SelectItem value="outlook">Outlook</SelectItem><SelectItem value="device">Installed/default mail app</SelectItem></SelectContent></Select></div><div className="flex items-end"><Button variant="outline" className="w-full" onClick={() => openEmailDialog()}><Users className="mr-2 h-4 w-4" />Select all with email</Button></div></div><label className="flex items-start gap-3 rounded-lg border bg-muted/40 p-3"><Checkbox checked={attachOnSend} onCheckedChange={v => setAttachOnSend(v === true)} /><span><span className="block text-sm font-medium">Send with attachment</span><span className="block text-xs text-muted-foreground">Prepare the matching PDF before opening each draft.</span></span></label><div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border p-3">{reports.map(r => <label key={r.id} className="flex items-center gap-3 rounded-md p-2 hover:bg-muted"><Checkbox checked={!!selection[r.id]} onCheckedChange={v => setSelection(s => ({ ...s, [r.id]: v === true }))} disabled={!r.email} /><span className="flex-1 text-sm">{r.name}<span className="ml-2 text-xs text-muted-foreground">{r.email || "No email"}</span></span><Badge variant="outline">{r.items ? "Made sales" : "No sales"}</Badge></label>)}</div><div className="space-y-2"><Label>Message</Label><Textarea rows={6} value={message} onChange={e => setMessage(e.target.value)} /></div><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setEmailOpen(false)}>Cancel</Button><Button onClick={sendEmails}><Mail className="mr-2 h-4 w-4" />Draft selected messages</Button></div></div></DialogContent></Dialog>
     <Dialog open={restockEditorOpen} onOpenChange={setRestockEditorOpen}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Edit restock request message</DialogTitle></DialogHeader><div className="space-y-4"><p className="text-sm text-muted-foreground">This second message is drafted for suppliers whose linked inventory is at or below its minimum level. Use <code>{"{supplier}"}</code> and <code>{"{restock}"}</code> as placeholders.</p><Textarea rows={9} value={stockMessage} onChange={e => setStockMessage(e.target.value)} /><div className="flex justify-end"><Button onClick={() => { localStorage.setItem("zuri_supplier_restock_message", stockMessage); setRestockEditorOpen(false); }}>Save restock message</Button></div></div></DialogContent></Dialog>
-    <Dialog open={!!popupRequest} onOpenChange={open => !open && setPopupRequest(null)}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>Allow report and email windows?</DialogTitle></DialogHeader><div className="space-y-4"><p className="text-sm text-muted-foreground">The next step opens report previews and email drafts in new windows. If your browser asks, choose <strong>Allow popups</strong> for this site.</p><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setPopupRequest(null)}>Cancel</Button><Button onClick={confirmPopupRequest}>Allow and continue</Button></div></div></DialogContent></Dialog>
+    <Dialog open={!!popupRequest} onOpenChange={open => !open && setPopupRequest(null)}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>Allow e-mail windows?</DialogTitle></DialogHeader><div className="space-y-4"><p className="text-sm text-muted-foreground">The next step opens an e-mail draft for each selected supplier. If your browser asks, choose <strong>Allow popups</strong> for this site. Downloading and printing do not need this.</p><div className="flex justify-end gap-2"><Button variant="outline" onClick={() => setPopupRequest(null)}>Cancel</Button><Button onClick={confirmPopupRequest}>Allow and continue</Button></div></div></DialogContent></Dialog>
   </div>;
 };
 

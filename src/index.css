@@ -452,3 +452,79 @@
     scroll-margin-top: 100px;
   }
 }
+/*
+ * Main loading spinner: two rings (rotateX/rotateY 70deg) chasing each other,
+ * the second offset in time for the weave.
+ *
+ * --size drives everything: ring diameter is 48 x --size and the perspective is
+ * 1000 x --size, so a single number scales the mark.
+ *
+ * The reference used #fff for the first ring, which disappears on the app's
+ * light surfaces, so it is driven by the theme token; the orange stays as the
+ * accent. Force `--color-1: #fff` on a dark container to get the original.
+ */
+.zuri-loader {
+  --color-1: hsl(var(--primary));
+  --color-2: #ff3d00;
+  --size: 0.6px;
+
+position: relative;
+  display: inline-block;
+  border-radius: 50%;
+  width: calc(48 * var(--size));
+  height: calc(48 * var(--size));
+  /* The box-shadow offsets are in em, so pin font-size to --size instead of
+     inheriting it: otherwise the dot spread changes with surrounding text. */
+  font-size: calc(16 * var(--size));
+  color: var(--color-1);
+  transform: rotateZ(45deg);
+  perspective: calc(1000 * var(--size));
+}
+
+.zuri-loader::before,
+.zuri-loader::after {
+  content: '';
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: inherit;
+  height: inherit;
+  border-radius: 50%;
+  transform: rotateX(70deg);
+  animation: zuriRingSpin 1s linear infinite;
+}
+
+.zuri-loader::after {
+  color: var(--color-2);
+  transform: rotateY(70deg);
+  animation-delay: 0.4s;
+}
+
+@keyframes zuriRingSpin {
+  0%,
+  100% {
+    box-shadow: 0.2em 0 0 0 currentcolor;
+  }
+  12% {
+    box-shadow: 0.2em 0.2em 0 0 currentcolor;
+  }
+  25% {
+    box-shadow: 0 0.2em 0 0 currentcolor;
+  }
+  37% {
+    box-shadow: -0.2em 0.2em 0 0 currentcolor;
+  }
+  50% {
+    box-shadow: -0.2em 0 0 0 currentcolor;
+  }
+  62% {
+    box-shadow: -0.2em -0.2em 0 0 currentcolor;
+  }
+  75% {
+    box-shadow: 0 -0.2em 0 0 currentcolor;
+  }
+  87% {
+    box-shadow: 0.2em -0.2em 0 0 currentcolor;
+  }
+}

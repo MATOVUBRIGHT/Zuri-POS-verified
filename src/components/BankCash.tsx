@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Banknote,
   Building2,
   FileText,
   Landmark,
   Loader2,
-  Receipt,
+Receipt,
   RefreshCw,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtCurrency, getCurrencySymbol } from "@/lib/currency";
 import BankCashForm, { type BranchAccount } from "@/components/BankCashForm";
+import { usePaymentAccounts } from "@/hooks/usePaymentAccounts";
 
 type Deposit = {
   id: string;
@@ -30,6 +32,7 @@ type Deposit = {
   amount: number;
   notes: string | null;
   receipt_url: string | null;
+  created_by: string | null;
   created_at: string;
 };
 
@@ -48,34 +51,29 @@ const BankCash = ({
   const { toast } = useToast();
   const storeId = currentStoreId ?? null;
 
-  const [accounts, setAccounts] = useState<BranchAccount[]>([]);
-  const [deposits, setDeposits] = useState<Deposit[]>([]);
+    const [deposits, setDeposits] = useState<Deposit[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [bankedBy, setBankedBy] = useState<Record<string, string>>({});
   const [signedReceipts, setSignedReceipts] = useState<Record<string, string>>({});
 
+  // Query-backed so Supabase Realtime (and the polling fallback) refreshes the
+  // account list as soon as accounts are added, renamed, deactivated or removed.
+const accountsQuery = usePaymentAccounts(storeId ?? null, true);
+  const accounts = (accountsQuery.data ?? []) as unknown as BranchAccount[];
+
+  // React Query returns a fresh result object on every render. Depending on it
+  // re-created `loadAccounts` each render, which re-ran the effect below and
+  // refetched in a loop, so the banking history reloaded endlessly and flickered
+  // between the spinner and the list. Hold the refetch fn in a ref instead so
+  // the callback identity stays stable.
+  const refetchAccountsRef = useRef(accountsQuery.refetch);
+  refetchAccountsRef.current = accountsQuery.refetch;
+
   const loadAccounts = useCallback(async () => {
-    if (!storeId) {
-      setAccounts([]);
-      return;
-    }
-    // branch_payment_accounts is not in the generated Supabase types yet, so the
-    // cast matches how PaymentAccounts.tsx reads the same table.
-    const { data, error } = await (supabase.from("branch_payment_accounts" as any) as any)
-      .select("id, name, provider_type, account_number")
-      .eq("store_id", storeId)
-      .eq("is_active", true)
-      .order("name", { ascending: true });
-    if (error) {
-      toast({
-        title: "Could not load accounts",
-        description: error.message,
-        variant: "destructive",
-      });
-      return;
-    }
-    setAccounts((data ?? []) as BranchAccount[]);
-  }, [storeId, toast]);
+    await refetchAccountsRef.current();
+  }, []);
 
   const loadDeposits = useCallback(async () => {
     if (!storeId) {
@@ -85,26 +83,49 @@ const BankCash = ({
     setIsLoading(true);
     const { data, error } = await supabase
       .from("cash_banking_deposits")
-      .select(
-        "id, account_name, bank_name, account_number, amount, notes, receipt_url, created_at",
+.select(
+        "id, account_name, bank_name, account_number, amount, notes, receipt_url, created_by, created_at",
       )
       .eq("store_id", storeId)
       .order("created_at", { ascending: false })
       .limit(50);
 
-    if (error) {
+if (error) {
       toast({
         title: "Could not load banking history",
         description: error.message,
         variant: "destructive",
       });
+      // Surface it in the panel too: otherwise a failed load reads as
+      // "Nothing banked yet." and hides real history from the user.
+      setHistoryError(error.message);
       setIsLoading(false);
       return;
     }
 
     const rows = (data ?? []) as Deposit[];
-    setDeposits(rows);
+    setHistoryError(null);
+setDeposits(rows);
     setIsLoading(false);
+
+    // Deposits only store the auth uid, so resolve display names from profiles
+    // for just the ids present in this window rather than the whole staff list.
+    const actorIds = [
+      ...new Set(rows.map((r) => r.created_by).filter((id): id is string => Boolean(id))),
+    ];
+    if (actorIds.length === 0) {
+      setBankedBy({});
+    } else {
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("user_id, full_name")
+        .in("user_id", actorIds);
+      const names: Record<string, string> = {};
+      for (const p of (profiles ?? []) as Array<{ user_id: string; full_name: string | null }>) {
+        if (p.full_name) names[p.user_id] = p.full_name;
+      }
+      setBankedBy(names);
+    }
 
     // The receipts bucket is private, so each slip needs a short-lived signed
     // URL rather than a public one.
@@ -128,10 +149,12 @@ const BankCash = ({
     }
   }, [storeId, toast]);
 
-  useEffect(() => {
-    void loadAccounts();
+useEffect(() => {
+    // Accounts are fetched by usePaymentAccounts on mount, so refetching them
+    // here would double-request them. Only the deposit history needs an
+    // explicit load.
     void loadDeposits();
-  }, [loadAccounts, loadDeposits]);
+  }, [loadDeposits]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -231,6 +254,25 @@ const BankCash = ({
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Loading deposits…
               </div>
+            ) : historyError ? (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
+                <p className="font-semibold text-destructive">
+                  Banking history unavailable
+                </p>
+                <p className="mt-1 break-words text-muted-foreground">
+                  {historyError}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Try again
+                </Button>
+              </div>
             ) : deposits.length === 0 ? (
               <div className="py-10 text-center text-sm text-muted-foreground">
                 <Building2 className="mx-auto mb-2 h-8 w-8 opacity-30" />
@@ -259,26 +301,34 @@ const BankCash = ({
                         </span>
                       </div>
 
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+<div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                         <span className="text-xs text-muted-foreground">
                           {formatStamp(deposit.created_at)}
                         </span>
-                        {receiptHref ? (
-                          <a
-                            href={receiptHref}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                          >
-                            <FileText className="h-3 w-3" />
-                            View receipt
-                          </a>
-                        ) : deposit.receipt_url ? (
+                        <div className="flex items-center gap-3">
                           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                            <FileText className="h-3 w-3" />
-                            Receipt unavailable
+                            <User className="h-3 w-3" />
+                            {deposit.created_by
+                              ? bankedBy[deposit.created_by] || "Unknown user"
+                              : "Unknown user"}
                           </span>
-                        ) : null}
+{receiptHref ? (
+                            <a
+                              href={receiptHref}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                            >
+                              <FileText className="h-3 w-3" />
+                              View receipt
+                            </a>
+                          ) : deposit.receipt_url ? (
+                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                              <FileText className="h-3 w-3" />
+                              Receipt unavailable
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
 
                       {deposit.notes && (

@@ -664,27 +664,17 @@ export class DataSyncService {
     await this.initPromise;
     const table = String(_table);
 
-    // Serve from in-memory cache instantly if available
-    if (this.localCache.has(table)) {
-      const row = this.localCache.get(table);
-      const cached = (row?.data ?? []) as unknown[];
-      const merged = this.mergeWithPendingQueue(table, cached);
-      // Kick off background refresh without blocking
-      if (navigator.onLine) {
-        fetchFn().then(data => {
-          if (Array.isArray(data)) {
-            const fresh = this.mergeWithPendingQueue(table, data as unknown[]);
-            this.saveLocalData(table, fresh);
-          }
-        }).catch(() => {});
-      }
-      return merged as unknown as T;
-    }
-
+    // Offline (or cache-primed reads that must not hit the network) serve the mirror.
     if (!navigator.onLine) {
-      return (await this.getLocalData(table)) as unknown as T;
+      const offline = this.localCache.has(table)
+        ? (this.localCache.get(table)?.data ?? []) as unknown[]
+        : (await this.getLocalData(table)) as unknown[];
+      return this.mergeWithPendingQueue(table, offline) as unknown as T;
     }
 
+    // Online: always resolve from the server so a save is reflected on the very
+    // next refetch. Serving a primed cache here returned stale rows and left the
+    // fresh rows stranded in the mirror with no invalidation to surface them.
     try {
       const data = await fetchFn();
       if (Array.isArray(data)) {
@@ -695,9 +685,10 @@ export class DataSyncService {
       return data;
     } catch (err) {
       // Network failure - serve cached local data if available.
-      const local = await this.getLocalData(table);
-      const mergedLocal = this.mergeWithPendingQueue(table, local);
-      return mergedLocal as unknown as T;
+      const local = this.localCache.has(table)
+        ? (this.localCache.get(table)?.data ?? []) as unknown[]
+        : (await this.getLocalData(table)) as unknown[];
+      return this.mergeWithPendingQueue(table, local) as unknown as T;
     }
   }
 

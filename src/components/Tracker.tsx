@@ -200,7 +200,15 @@ const Tracker = () => {
     try {
       setPreview({ doc, url: await signedUrl(doc) });
     } catch (e: any) {
-      toast({ title: "Preview failed", description: e?.message || String(e), variant: "destructive" });
+      const detail = String(e?.message || e);
+      const denied = /row-level security|not authorized|permission|403|400/i.test(detail);
+      toast({
+        title: "Preview failed",
+        description: denied
+          ? `Zuri could not read this file from the receipts bucket (${detail}). Apply 20260926060000_tracker_storage_policies.sql, then re-upload the document.`
+          : detail,
+        variant: "destructive",
+      });
     }
   };
 
@@ -288,7 +296,7 @@ const Tracker = () => {
 
       if (picked) {
         const safe = picked.name.replace(/[^\w.\-]+/g, "_");
-        const path = `tracker/${currentStoreId}/${Date.now()}-${safe}`;
+        const path = `${currentStoreId}/tracker/${Date.now()}-${safe}`;
         const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, picked);
         if (upErr) throw upErr;
         file_path = path;

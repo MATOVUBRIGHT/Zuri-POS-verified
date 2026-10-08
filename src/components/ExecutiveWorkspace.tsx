@@ -171,10 +171,13 @@ export default function ExecutiveWorkspace({
   page,
   userId,
   onOpenBranch,
+  canCreateBranch = true,
 }: {
   page: ExecutivePage;
   userId: string | null;
   onOpenBranch: (branchId: string) => void;
+  // An accountant can review branches but must not be able to create one.
+  canCreateBranch?: boolean;
 }) {
   const { toast } = useToast();
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -463,7 +466,13 @@ export default function ExecutiveWorkspace({
       ),
     [displayCurrencyTotals],
   );
+  const openCreate = () => {
+    if (canCreateBranch) setCreateOpen(true);
+  };
   const createBranch = async () => {
+    // Guard the write itself, not just the buttons: hiding a control is not an
+    // authorization check.
+    if (!canCreateBranch) return;
     if (!branchName.trim() || !userId) return;
     setCreating(true);
     const { data, error: createError } = await supabase
@@ -509,7 +518,7 @@ export default function ExecutiveWorkspace({
   ) : page === "executive-branches" ? (
     <Branches
       branches={displayBranches}
-      onCreate={() => setCreateOpen(true)}
+      onCreate={openCreate}
       onManage={setManagedBranch}
     />
   ) : page === "executive-team" ? (
@@ -544,7 +553,7 @@ export default function ExecutiveWorkspace({
       currencyTotals={displayCurrencyTotals}
       todayCurrencyTotals={displayTodayCurrencyTotals}
       branches={displayBranches}
-      onCreate={() => setCreateOpen(true)}
+      onCreate={openCreate}
       onManage={setManagedBranch}
     />
   );
@@ -632,7 +641,7 @@ export default function ExecutiveWorkspace({
           </Button>
           {/* Settings available in the executive sidebar - removed header shortcut */}
           {page !== "executive-reports" && page !== "executive-team" && (
-            <Button onClick={() => setCreateOpen(true)}>
+            <Button onClick={openCreate}>
               <Plus className="mr-2 h-4 w-4" />
               Create branch
             </Button>
@@ -656,7 +665,7 @@ export default function ExecutiveWorkspace({
       )}
       {content}
       {/* Settings rendered inline via page route when `page === 'executive-settings'` */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={canCreateBranch && createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create a branch</DialogTitle>

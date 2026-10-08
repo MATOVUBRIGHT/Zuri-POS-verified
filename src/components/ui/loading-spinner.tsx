@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 
 // Anchors the loader to mount, so a page always shows one on open instead of
@@ -31,12 +31,14 @@ interface LoadingSpinnerProps {
   fullScreen?: boolean;
 }
 
-const markSizeClasses = {
-  sm: "h-10 w-10",
-  md: "h-14 w-14",
-  lg: "h-16 w-16",
-  xl: "h-20 w-20",
-};
+// The mark scales entirely off --size (48 x --size across), so each preset is
+// just a different value for it.
+const markScale = {
+  sm: "0.4px",
+  md: "0.6px",
+  lg: "0.85px",
+  xl: "1.1px",
+} as const;
 
 /** The shared Zuri loading mark used for full-page and page-region loading. */
 export function LoadingMark({ size = "md" }: { size?: "sm" | "md" | "lg" | "xl" }) {
@@ -44,17 +46,10 @@ export function LoadingMark({ size = "md" }: { size?: "sm" | "md" | "lg" | "xl" 
     <div
       role="status"
       aria-label="Loading"
-      className={cn(
-        "grid place-items-center rounded-md border border-slate-200 bg-white shadow-sm",
-        markSizeClasses[size]
-      )}
+      className="grid place-items-center"
+      style={{ "--size": markScale[size] } as CSSProperties}
     >
-      <div className="grid rotate-[-5deg] grid-cols-2 gap-1.5 rounded-sm border border-emerald-200/70 p-2">
-        <span className="h-3 w-3 animate-pulse rounded-[1px] bg-emerald-600 [animation-delay:0ms]" />
-        <span className="h-3 w-3 animate-pulse rounded-[1px] bg-slate-300 [animation-delay:180ms]" />
-        <span className="h-3 w-3 animate-pulse rounded-[1px] bg-slate-400 [animation-delay:360ms]" />
-        <span className="h-3 w-3 animate-pulse rounded-[1px] bg-emerald-500 [animation-delay:540ms]" />
-      </div>
+      <span className="zuri-loader" />
     </div>
   );
 }
@@ -106,6 +101,13 @@ export function PageLoader({
 // Inline loading spinner for buttons
 export function InlineSpinner({ className }: { className?: string }) {
   return (
-    <Loader2 className={cn("h-4 w-4 animate-spin", className)} />
+    <span
+      role="status"
+      aria-label="Loading"
+      className={cn("inline-flex shrink-0", className)}
+      style={{ "--size": "0.25px" } as CSSProperties}
+    >
+      <span className="zuri-loader" />
+    </span>
   );
 }

@@ -444,7 +444,8 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
   ];
   const accountantNavigationItems = [
     { id: "accountant-dashboard", label: "Finance Overview", icon: HandCoins },
-    { id: "executive-expenses", label: "My Expenses", icon: Wallet },
+    // `executive-expenses` is deliberately absent: an accountant reviews and
+    // approves spending, they do not submit their own expenses.
     { id: "executive-reports", label: "Reports", icon: FileText },
     { id: "executive-accounts", label: "Accounts", icon: Landmark },
     { id: "scheduled-payments", label: "Scheduled Payments", icon: Receipt },

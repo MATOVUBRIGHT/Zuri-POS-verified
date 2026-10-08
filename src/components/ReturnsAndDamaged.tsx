@@ -17,7 +17,7 @@ import { StockItem, SaleItem } from "@/types";
 import { insertRowsWithSchemaFallback, updateByIdWithSchemaFallback } from "@/lib/supabaseSchemaFallback";
 import {
   Undo2, AlertTriangle, Package, Search, X, Plus, Minus,
-  RefreshCw, CheckCircle, Clock, TrendingDown
+  RefreshCw, CheckCircle, Clock, TrendingDown, Trash2
 } from "lucide-react";
 
 interface ReturnsAndDamagedProps {
@@ -94,13 +94,15 @@ export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId
   const [addToStock, setAddToStock] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  // Damaged stock (no sale)
-  const [damagedProduct, setDamagedProduct] = useState("");
-  const [damagedQty, setDamagedQty] = useState(1);
+  // Damaged stock (no sale) — one or more items are flagged for review
+  const [damagedQuery, setDamagedQuery] = useState("");
+  const [damagedSelection, setDamagedSelection] = useState<Record<string, number>>({});
   const [damagedReason, setDamagedReason] = useState("");
   const [damagedNote, setDamagedNote] = useState("");
+  const [damagedReview, setDamagedReview] = useState<StockItem[]>([]);
+  const [resolvingItem, setResolvingItem] = useState<string | null>(null);
 
-  useEffect(() => { fetchReturns(); }, [currentStoreId]);
+  useEffect(() => { fetchReturns(); fetchDamagedReview(); }, [currentStoreId]);
 
   // Auto-open return dialog if navigated with a saleId
   useEffect(() => {
@@ -149,9 +151,79 @@ export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId
         }
       }
 
-      setReturns((rows || []).map((record: any) => mapReturnRecord(record)));
+setReturns((rows || []).map((record: any) => mapReturnRecord(record)));
     } catch { setReturns([]); }
     finally { setLoading(false); }
+  };
+
+  // Damaged units stay in `quantity` but are excluded from selling until reviewed.
+  const fetchDamagedReview = async () => {
+    if (!currentStoreId) { setDamagedReview([]); return; }
+    try {
+      const res = await (supabase.from("inventory" as any)
+        .select("id, product_name, quantity, damaged_quantity, damaged_at, damaged_reason, cost_per_unit, store_id, category")
+        .eq("store_id", currentStoreId)
+        .gt("damaged_quantity", 0)
+        .order("damaged_at", { ascending: false }) as any);
+
+      // The damaged_* columns arrive with migration 20260926100000. Until it is
+      // applied the select fails, so fall back to the local stock list to keep
+      // the page usable instead of blanking it.
+      if (res.error) {
+        const local = stockData.filter(s => (s.damaged_quantity || 0) > 0);
+        setDamagedReview(local);
+        return;
+      }
+
+      setDamagedReview(((res.data || []) as any[]).map((r: any) => ({
+        id: r.id,
+        productName: r.product_name,
+        category: r.category,
+        quantity: Number(r.quantity) || 0,
+        damaged_quantity: Number(r.damaged_quantity) || 0,
+        damaged_at: r.damaged_at,
+        damaged_reason: r.damaged_reason,
+        costPerUnit: Number(r.cost_per_unit) || 0,
+        totalValue: 0,
+        sachets_count: 0, loose_items: 0, opened_sachets: 0, items_per_sachet: 1,
+        retail_price: 0, wholesale_price: 0, product_name: r.product_name,
+        store_id: r.store_id ?? currentStoreId, min_stock_level: 0, reorder_quantity: 0,
+      } as unknown as StockItem)));
+    } catch { setDamagedReview([]); }
+  };
+
+  // Review outcome for flagged units: put them back on the shelf, or write them off.
+  const resolveDamagedItem = async (item: StockItem, action: "sellable" | "writeoff") => {
+    if (!currentStoreId) return;
+    const flagged = item.damaged_quantity || 0;
+    if (flagged <= 0) return;
+
+    setResolvingItem(item.id);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not authenticated");
+
+      const isWriteOff = action === "writeoff";
+      const nextQuantity = Math.max(0, (item.quantity || 0) - (isWriteOff ? flagged : 0));
+
+      const result = await updateByIdWithSchemaFallback("inventory", item.id, {
+        quantity: nextQuantity,
+        damaged_quantity: 0,
+        damaged_at: null,
+        damaged_reason: null,
+      } as Record<string, unknown>);
+
+      if (result.error) throw result.error;
+
+      onStockUpdate?.({ ...item, quantity: nextQuantity, damaged_quantity: 0, damaged_at: null, damaged_reason: null });
+      toast({
+        title: isWriteOff ? "✓ Written off" : "✓ Returned to sellable stock",
+        description: `${item.productName}: ${flagged} unit${flagged === 1 ? "" : "s"} ${isWriteOff ? "removed from stock" : "available to sell again"}`,
+      });
+      fetchDamagedReview();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally { setResolvingItem(null); }
   };
 
   const filteredReturns = useMemo(() => {
@@ -194,11 +266,56 @@ export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId
     setSaleSearch("");
   };
 
+  // Flags units as damaged in stock. They stay in `quantity` but become
+  // unsellable (quantity - damaged_quantity) until reviewed, so nothing can be
+  // sold while it is awaiting a decision.
+  const flagDamaged = async (
+    entries: Array<{ productName: string; quantity: number }>,
+    reason: string,
+  ): Promise<Array<{ productName: string; quantity: number; cost: number }>> => {
+    const flagged: Array<{ productName: string; quantity: number; cost: number }> = [];
+
+    for (const { productName, quantity } of entries) {
+      if (quantity <= 0) continue;
+      const stockItem = stockData.find(s => s.productName === productName);
+      if (!stockItem) continue;
+
+      const currentQty = stockItem.quantity || 0;
+      const currentDamaged = stockItem.damaged_quantity || 0;
+      const nextDamaged = currentDamaged + quantity;
+
+      if (nextDamaged > currentQty) {
+        toast({
+          title: "Not enough stock",
+          description: `${productName}: only ${Math.max(0, currentQty - currentDamaged)} sellable unit(s) left, cannot flag ${quantity}.`,
+          variant: "destructive",
+        });
+        continue;
+      }
+
+      const flaggedAt = new Date().toISOString();
+      const res = await updateByIdWithSchemaFallback("inventory", stockItem.id, {
+        damaged_quantity: nextDamaged,
+        damaged_at: flaggedAt,
+        damaged_reason: reason,
+      } as Record<string, unknown>);
+      if (res.error) throw res.error;
+
+      onStockUpdate?.({ ...stockItem, damaged_quantity: nextDamaged, damaged_at: flaggedAt, damaged_reason: reason });
+      flagged.push({ productName, quantity, cost: stockItem.costPerUnit || 0 });
+    }
+
+    return flagged;
+  };
+
   const submitReturn = async () => {
     if (!currentStoreId) return;
     const selected = returnItems.filter(i => i.selected);
     if (returnType === "return" && (!selectedSale || selected.length === 0)) {
       toast({ title: "Select items to return", variant: "destructive" }); return;
+    }
+    if (returnType === "damaged" && selected.length === 0) {
+      toast({ title: "Select items to mark as damaged", variant: "destructive" }); return;
     }
     if (!returnReason) { toast({ title: "Select a reason", variant: "destructive" }); return; }
 
@@ -207,9 +324,16 @@ export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
+      // Damaged goods coming back from a sale are held for review rather than
+      // refunded, and they are never returned to sellable stock automatically.
+      const flagged = returnType === "damaged"
+        ? await flagDamaged(selected.map(i => ({ productName: i.productName, quantity: i.quantity })), returnReason)
+        : [];
+      if (returnType === "damaged" && flagged.length === 0) return;
+
       const items = returnType === "return"
         ? selected.map(i => ({ productName: i.productName, quantity: i.quantity, unitPrice: i.unitPrice, total: i.quantity * i.unitPrice }))
-        : [{ productName: damagedProduct, quantity: damagedQty, unitPrice: 0, total: 0 }];
+        : flagged.map(f => ({ productName: f.productName, quantity: f.quantity, unitPrice: f.cost, total: f.cost * f.quantity }));
 
       const totalAmount = items.reduce((s, i) => s + i.total, 0);
 
@@ -279,8 +403,9 @@ export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId
         }
       }
 
-      // 3. Add back to stock if requested
-      if (addToStock) {
+      // 3. Add back to stock if requested. Damaged goods are excluded: they are
+      // already flagged for review and must stay out of the sellable figure.
+      if (addToStock && returnType === "return") {
         for (const item of items) {
           const stockItem = stockData.find(s => s.productName === item.productName);
           if (stockItem) {
@@ -302,38 +427,49 @@ export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId
     } finally { setSubmitting(false); }
   };
 
-  const submitDamaged = async () => {
-    if (!currentStoreId || !damagedProduct || !damagedReason) {
+const submitDamaged = async () => {
+    const entries = Object.entries(damagedSelection).filter(([, qty]) => qty > 0);
+    if (!currentStoreId || entries.length === 0 || !damagedReason) {
       toast({ title: "Fill all required fields", variant: "destructive" }); return;
     }
     setSubmitting(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
-      const stockItem = stockData.find(s => s.productName === damagedProduct);
+
+      // Flag the units in stock so they are held for review. They are NOT
+      // deducted from `quantity`: sellable stock is quantity - damaged_quantity,
+      // so an unreviewed unit can never be sold.
+      const flagged = await flagDamaged(
+        entries.map(([productName, quantity]) => ({ productName, quantity })),
+        damagedReason,
+      );
+
+      if (flagged.length === 0) return;
+
+      const totalCost = flagged.reduce((s, i) => s + i.cost * i.quantity, 0);
       const damagedPayload = {
         store_id: currentStoreId, user_id: user.id,
-        items: [{ productName: damagedProduct, quantity: damagedQty, unitPrice: stockItem?.cost_per_unit || 0, total: (stockItem?.cost_per_unit || 0) * damagedQty }],
-        total_amount: (stockItem?.cost_per_unit || 0) * damagedQty,
+        items: flagged.map(i => ({ productName: i.productName, quantity: i.quantity, unitPrice: i.cost, total: i.cost * i.quantity })),
+        total_amount: totalCost,
         reason: damagedReason,
         return_reason: damagedReason,
         return_notes: damagedNote || null,
         refund_status: "completed",
         refund_method: "cash",
         return_date: new Date().toISOString().split("T")[0],
-        returned_products: [{ productName: damagedProduct, quantity: damagedQty }],
+        returned_products: flagged.map(i => ({ productName: i.productName, quantity: i.quantity })),
       };
       const insertResult = await insertRowsWithSchemaFallback("sale_returns", [damagedPayload]);
       if (insertResult.error) throw insertResult.error;
-      // Deduct from stock
-      if (stockItem) {
-        const newQty = Math.max(0, (stockItem.quantity || 0) - damagedQty);
-        await supabase.from("inventory").update({ quantity: newQty }).eq("id", stockItem.id);
-        onStockUpdate?.({ ...stockItem, quantity: newQty });
-      }
-      toast({ title: "✓ Damaged stock recorded" });
-      setDamagedProduct(""); setDamagedQty(1); setDamagedReason(""); setDamagedNote("");
+
+      toast({
+        title: "✓ Flagged for review",
+        description: `${flagged.length} item${flagged.length === 1 ? "" : "s"} held back from selling — review them in Damaged Stock below.`,
+      });
+      setDamagedQuery(""); setDamagedSelection({}); setDamagedReason(""); setDamagedNote("");
       fetchReturns();
+      fetchDamagedReview();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally { setSubmitting(false); }
@@ -343,14 +479,34 @@ export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId
   const cur = getCurrencySymbol();
 
   const filteredSales = useMemo(() => {
-    const q = saleSearch.toLowerCase();
+    const q = saleSearch.trim().toLowerCase();
     if (!q) return salesData.slice(0, 20);
-    return salesData.filter(s =>
-      s.customerName?.toLowerCase().includes(q) ||
-      s.id?.slice(-8).toLowerCase().includes(q) ||
-      s.products?.some(p => p.productName?.toLowerCase().includes(q))
-    ).slice(0, 20);
+    const digits = q.replace(/[^a-z0-9]/g, "");
+    return salesData.filter(s => {
+      const byReceipt = String(s.receiptNumber || "").toLowerCase().includes(q);
+      // Match a sales id typed either full or as the short trailing code, and
+      // ignore separators so "S-1042" still matches.
+      const id = String(s.id || "").toLowerCase();
+      const bySaleId = digits.length > 0 && (id.includes(digits) || id.slice(-8).includes(digits));
+      const byCustomer = String(s.customerName || "").toLowerCase().includes(q);
+      const byProduct = (s.products || []).some(p => String(p.productName || "").toLowerCase().includes(q));
+      return byReceipt || bySaleId || byCustomer || byProduct;
+    }).slice(0, 20);
   }, [salesData, saleSearch]);
+
+  // Product search for the damaged form: match on name, category, or barcode.
+  const damagedMatches = useMemo(() => {
+    const q = damagedQuery.trim().toLowerCase();
+    const pool = stockData.filter(s => (s.quantity || 0) > 0);
+    if (!q) return pool.slice(0, 8);
+    return pool.filter(s =>
+      String(s.productName || "").toLowerCase().includes(q) ||
+      String(s.category || "").toLowerCase().includes(q) ||
+      String(s.barcode || "").toLowerCase().includes(q)
+    ).slice(0, 8);
+  }, [stockData, damagedQuery]);
+
+  const damagedSelectedEntries = Object.entries(damagedSelection).filter(([, qty]) => qty > 0);
 
   if (showLoader) {
     return <PageLoader text="Loading returns..." />;
@@ -404,20 +560,60 @@ export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId
         <h3 className="font-semibold flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-red-500" />Quick Damaged Stock Entry</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="space-y-1 md:col-span-2">
-            <Label className="text-xs">Product *</Label>
-            <Select value={damagedProduct} onValueChange={setDamagedProduct}>
-              <SelectTrigger><SelectValue placeholder="Select product" /></SelectTrigger>
-              <SelectContent>{stockData.map(s => <SelectItem key={s.id} value={s.productName}>{s.productName} (Qty: {s.quantity})</SelectItem>)}</SelectContent>
-            </Select>
+            <Label className="text-xs">Item name <span className="text-destructive">*</span></Label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input value={damagedQuery} onChange={e => setDamagedQuery(e.target.value)}
+                placeholder="Search item by name or barcode..." autoComplete="off" className="pl-9" />
+            </div>
+            <div className="space-y-1 max-h-44 overflow-y-auto pt-1">
+              {damagedMatches.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2">No in-stock item matches "{damagedQuery}".</p>
+              ) : damagedMatches.map(s => {
+                const flagged = s.damaged_quantity || 0;
+                const sellable = Math.max(0, (s.quantity || 0) - flagged);
+                const qty = damagedSelection[s.productName] || 0;
+                return (
+                  <div key={s.id}
+                    className={`flex items-center gap-2 p-2 rounded-lg border transition-colors ${qty > 0 ? "border-red-300 bg-red-50/50" : ""}`}>
+                    <input type="checkbox" checked={qty > 0} onChange={e => {
+                      const next = { ...damagedSelection };
+                      if (e.target.checked) next[s.productName] = 1; else delete next[s.productName];
+                      setDamagedSelection(next);
+                    }} className="h-4 w-4 cursor-pointer" />
+                    <span className="flex-1 text-sm font-medium truncate">{s.productName}</span>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {sellable} sellable{flagged > 0 ? ` · ${flagged} flagged` : ""}
+                    </span>
+                    {qty > 0 && (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => {
+                          const next = { ...damagedSelection };
+                          next[s.productName] = Math.max(1, qty - 1);
+                          setDamagedSelection(next);
+                        }} className="h-6 w-6 rounded border flex items-center justify-center hover:bg-muted"><Minus className="h-3 w-3" /></button>
+                        <span className="w-7 text-center text-sm font-semibold">{qty}</span>
+                        <button onClick={() => {
+                          const next = { ...damagedSelection };
+                          next[s.productName] = Math.min(sellable, qty + 1);
+                          setDamagedSelection(next);
+                        }} disabled={qty >= sellable} className="h-6 w-6 rounded border flex items-center justify-center hover:bg-muted disabled:opacity-40"><Plus className="h-3 w-3" /></button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {damagedSelectedEntries.length > 0 && (
+              <p className="text-xs text-muted-foreground pt-1">
+                Selected: {damagedSelectedEntries.map(([n, q]) => `${q}× ${n}`).join(", ")}
+              </p>
+            )}
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Quantity *</Label>
-            <Input type="number" min={1} value={damagedQty} onChange={e => setDamagedQty(Math.max(1, +e.target.value))} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Reason *</Label>
+            <Label className="text-xs">Reason <span className="text-destructive">*</span></Label>
             <Select value={damagedReason} onValueChange={setDamagedReason}>
-              <SelectTrigger><SelectValue placeholder="Reason" /></SelectTrigger>
+              <SelectTrigger><SelectValue placeholder="Select a reason" /></SelectTrigger>
               <SelectContent>{DAMAGED_REASONS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
             </Select>
           </div>
@@ -427,10 +623,55 @@ export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId
             <Label className="text-xs">Note (optional)</Label>
             <Input placeholder="Additional details..." value={damagedNote} onChange={e => setDamagedNote(e.target.value)} />
           </div>
-          <Button onClick={submitDamaged} disabled={submitting} className="bg-red-500 hover:bg-red-600 gap-2">
-            <AlertTriangle className="h-4 w-4" />Record Damaged
+          <Button onClick={submitDamaged} disabled={submitting || damagedSelectedEntries.length === 0} className="bg-red-500 hover:bg-red-600 gap-2">
+            <AlertTriangle className="h-4 w-4" />Flag as Damaged
           </Button>
         </div>
+      </div>
+
+      {/* Damaged stock awaiting review — blocked from selling until resolved */}
+      <div className="rounded-xl border border-red-200 bg-red-50/30 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-red-500" />Damaged Stock Pending Review
+          </h3>
+          <Badge variant={damagedReview.length > 0 ? "destructive" : "secondary"}>
+            {damagedReview.length} item{damagedReview.length === 1 ? "" : "s"}
+          </Badge>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          These units stay in stock but are excluded from selling until you review them.
+        </p>
+        {damagedReview.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-2">Nothing flagged. Damaged items you record will appear here for review.</p>
+        ) : (
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {damagedReview.map(item => {
+              const flagged = item.damaged_quantity || 0;
+              const sellable = Math.max(0, (item.quantity || 0) - flagged);
+              return (
+                <div key={item.id} className="flex flex-wrap items-center gap-3 p-3 rounded-lg border bg-background">
+                  <div className="flex-1 min-w-[160px]">
+                    <p className="text-sm font-medium">{item.productName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {flagged} flagged · {sellable} sellable of {item.quantity}
+                      {item.damaged_reason ? ` · ${item.damaged_reason}` : ""}
+                      {item.damaged_at ? ` · ${fmtDate(item.damaged_at)}` : ""}
+                    </p>
+                  </div>
+                  <Button size="sm" variant="outline" disabled={resolvingItem === item.id}
+                    onClick={() => resolveDamagedItem(item, "sellable")}>
+                    <RefreshCw className="h-3.5 w-3.5 mr-1" />Return to sellable
+                  </Button>
+                  <Button size="sm" variant="destructive" disabled={resolvingItem === item.id}
+                    onClick={() => resolveDamagedItem(item, "writeoff")}>
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />Write off
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Search */}

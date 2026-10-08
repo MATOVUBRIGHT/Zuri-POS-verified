@@ -33,12 +33,15 @@ export interface Product {
 
 export interface StockItem {
   id: string;
-  productName: string;
-  category: string;
-  quantity: number;
-  costPerUnit: number;
-  totalValue: number;
-  dateOfPurchase?: string;
+productName: string;
+      category: string;
+      quantity: number;
+      costPerUnit: number;
+      totalValue: number;
+      dateOfPurchase?: string;
+      damaged_quantity?: number;
+      damaged_at?: string | null;
+      damaged_reason?: string | null;
   sachets_count: number;
   loose_items: number;
   opened_sachets: number;
