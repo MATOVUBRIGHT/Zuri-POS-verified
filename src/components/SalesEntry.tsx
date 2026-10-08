@@ -34,6 +34,7 @@ import SalesReport from "@/components/SalesReport";
 import PendingSales, { loadPending } from "@/components/PendingSales";
 import { getCurrencySymbol } from "@/lib/currency";
 import { usePosStore } from "@/store/usePosStore";
+import WalkInTracker from "@/components/WalkInTracker";
 import { generateReceiptHTML } from "@/lib/receiptTemplate";
 
 const saleSchema = z.object({
