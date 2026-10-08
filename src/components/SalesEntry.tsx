@@ -1173,8 +1173,6 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
     printWindow.focus();
   };
 
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
