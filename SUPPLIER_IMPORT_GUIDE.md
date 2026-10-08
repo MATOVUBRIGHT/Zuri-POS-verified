@@ -29,13 +29,13 @@ The new Supplier Import feature allows you to upload and import supplier data fr
   - **Create new** - Create duplicate entries with modified names
 
 ### 📁 File Format Support
-- **CSV files** (recommended) - Universal compatibility
-- **Excel files** (.xlsx, .xls) - Loaded via CDN when needed
+- **Excel files** (.xlsx, .xls) - Full support with automatic library loading
+- **CSV files** - Universal compatibility with robust parsing
 
 ## How to Use
 
 ### Step 1: Prepare Your File
-1. Click "Download Template" to get a sample CSV file
+1. Click "Download CSV Template" or "Download Excel Template" to get a sample file
 2. Use the template structure or create your own with these columns:
    - Name (required)
    - Company, Phone, Email, Address (optional)
@@ -44,7 +44,7 @@ The new Supplier Import feature allows you to upload and import supplier data fr
 
 ### Step 2: Upload File
 1. Click "Import Suppliers" button
-2. Select your CSV or Excel file
+2. Select your Excel or CSV file
 3. Wait for file processing and preview
 
 ### Step 3: Review Preview
@@ -94,11 +94,11 @@ John Wholesale,XYZ Company,+256701111111,john@xyz.com,"Entebbe, Uganda","Fast de
 
 ## Tips for Success
 
-1. **Use the template** - Download and modify the provided template
+1. **Use the templates** - Download and modify either Excel or CSV templates
 2. **Clean your data** - Remove empty rows and fix formatting before upload
 3. **Test with small files** - Try importing 5-10 records first
 4. **Backup existing data** - Export current suppliers before major imports
-5. **Use CSV format** - More reliable than Excel for large datasets
+5. **Excel or CSV both work** - Choose the format you're most comfortable with
 6. **Handle duplicates carefully** - Review the duplicate detection before importing
 
 ## Troubleshooting
@@ -106,7 +106,12 @@ John Wholesale,XYZ Company,+256701111111,john@xyz.com,"Entebbe, Uganda","Fast de
 ### File Won't Upload
 - Check file format (.csv, .xlsx, .xls only)
 - Ensure file has header row and at least one data row
-- Try converting Excel to CSV format
+- For Excel files, check your internet connection (library loads automatically)
+
+### Excel Processing Issues
+- If Excel processing fails, try converting to CSV format
+- Ensure Excel file isn't password protected
+- Check that the first sheet contains your data
 
 ### Column Mapping Issues  
 - Ensure "Name" field is mapped (required)

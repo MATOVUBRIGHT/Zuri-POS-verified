@@ -13,18 +13,31 @@ import { supabase } from "@/integrations/supabase/client";
 import { Upload, FileSpreadsheet, Eye, MapPin, Users, Plus, Check, AlertCircle, Loader2 } from "lucide-react";
 import { logAudit } from "@/lib/audit";
 
-// Dynamic import for XLSX to handle build environments
-let XLSX: any = null;
-const loadXLSX = async () => {
-  if (!XLSX) {
-    try {
-      XLSX = await import('https://cdn.skypack.dev/xlsx');
-    } catch (error) {
-      console.warn('XLSX not available, falling back to CSV only');
-      return null;
-    }
+// Excel support via CDN
+declare global {
+  interface Window {
+    XLSX: any;
   }
-  return XLSX;
+}
+
+const loadXLSX = async (): Promise<any> => {
+  if (typeof window !== 'undefined' && window.XLSX) {
+    return window.XLSX;
+  }
+
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js';
+    script.onload = () => {
+      if (window.XLSX) {
+        resolve(window.XLSX);
+      } else {
+        reject(new Error('Failed to load XLSX library'));
+      }
+    };
+    script.onerror = () => reject(new Error('Failed to load XLSX library'));
+    document.head.appendChild(script);
+  });
 };
 
 interface ColumnMapping {
@@ -105,11 +118,11 @@ export default function SupplierImportDialog({
     try {
       setIsProcessing(true);
       
-      const text = await file.text();
       let data: any[][] = [];
       
       if (file.name.toLowerCase().endsWith('.csv')) {
-        // Simple CSV parsing
+        // Handle CSV files
+        const text = await file.text();
         const lines = text.split('\n').filter(line => line.trim());
         data = lines.map(line => {
           // Basic CSV parsing - handles quoted values
@@ -131,17 +144,31 @@ export default function SupplierImportDialog({
           result.push(current.trim());
           return result;
         });
-      } else {
-        // Try to load XLSX for Excel files
-        const xlsxLib = await loadXLSX();
-        if (!xlsxLib) {
-          throw new Error("Excel files require XLSX library. Please use CSV format.");
+      } else if (file.name.match(/\.(xlsx|xls)$/i)) {
+        // Handle Excel files
+        try {
+          const XLSX = await loadXLSX();
+          const buffer = await file.arrayBuffer();
+          const workbook = XLSX.read(buffer, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        } catch (error) {
+          console.error('Excel processing error:', error);
+          toast({
+            title: "Excel processing failed",
+            description: "Could not process Excel file. Please try converting to CSV format or check your internet connection.",
+            variant: "destructive",
+          });
+          return;
         }
-        
-        const buffer = await file.arrayBuffer();
-        const workbook = xlsxLib.read(buffer);
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        data = xlsxLib.utils.sheet_to_json(worksheet, { header: 1 });
+      } else {
+        toast({
+          title: "Unsupported format",
+          description: "Please upload a CSV or Excel (.xlsx, .xls) file.",
+          variant: "destructive",
+        });
+        return;
       }
 
       if (data.length < 2) {
@@ -473,7 +500,7 @@ export default function SupplierImportDialog({
                   <Check className="h-4 w-4 text-green-500 mt-0.5" />
                   <div>
                     <p className="font-medium">Supported formats</p>
-                    <p className="text-muted-foreground">CSV (preferred), Excel (.xlsx, .xls)</p>
+                    <p className="text-muted-foreground">Excel (.xlsx, .xls), CSV</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-2">
@@ -493,28 +520,58 @@ export default function SupplierImportDialog({
               </div>
 
               <div className="text-center">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const csvContent = `Name,Company,Phone,Email,Address,Notes,Total Supplied,Outstanding Balance
+                <div className="flex gap-2 justify-center">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const csvContent = `Name,Company,Phone,Email,Address,Notes,Total Supplied,Outstanding Balance
 Jane Supplier,ABC Ltd,+256700000000,jane@abc.com,"Kampala, Uganda","Reliable supplier",50000,15000
 John Wholesale,XYZ Company,+256701111111,john@xyz.com,"Entebbe, Uganda","Fast delivery",75000,0`;
-                    
-                    const blob = new Blob([csvContent], { type: 'text/csv' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = 'supplier_template.csv';
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                  }}
-                >
-                  Download Template
-                </Button>
+                      
+                      const blob = new Blob([csvContent], { type: 'text/csv' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'supplier_template.csv';
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    Download CSV Template
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const XLSX = await loadXLSX();
+                        const data = [
+                          ['Name', 'Company', 'Phone', 'Email', 'Address', 'Notes', 'Total Supplied', 'Outstanding Balance'],
+                          ['Jane Supplier', 'ABC Ltd', '+256700000000', 'jane@abc.com', 'Kampala, Uganda', 'Reliable supplier', 50000, 15000],
+                          ['John Wholesale', 'XYZ Company', '+256701111111', 'john@xyz.com', 'Entebbe, Uganda', 'Fast delivery', 75000, 0]
+                        ];
+                        
+                        const ws = XLSX.utils.aoa_to_sheet(data);
+                        const wb = XLSX.utils.book_new();
+                        XLSX.utils.book_append_sheet(wb, ws, 'Suppliers');
+                        XLSX.writeFile(wb, 'supplier_template.xlsx');
+                      } catch (error) {
+                        toast({
+                          title: "Template generation failed",
+                          description: "Could not generate Excel template. Please use CSV template instead.",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                  >
+                    Download Excel Template
+                  </Button>
+                </div>
               </div>
             </div>
           )}
