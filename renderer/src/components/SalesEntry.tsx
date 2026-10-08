@@ -29,6 +29,7 @@ import ExcelImport from "@/components/ExcelImport";
 import { calculateTransaction } from "@/services/posCalculator";
 import { useAddSaleOptimistic } from "@/hooks/useOptimizedData";
 import { insertRowsWithSchemaFallback } from "@/lib/supabaseSchemaFallback";
+import { generateReceiptHTML } from "@/lib/receiptTemplate";
 
 const saleSchema = z.object({
   customerName: z.string().min(1, "Customer name is required"),
@@ -855,219 +856,18 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
     }
   };
 
+  const getReceiptNumber = (sale: SaleItem) => sale.receiptNumber || `LEGACY-${sale.id.slice(-8).toUpperCase()}`;
+
   const printReceipt = (sale: SaleItem) => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    // Use actual applied tax from current sale (already calculated)
-    const receiptSubtotal = sale.products.reduce((sum, p) => sum + (p.quantity * p.sellingPrice), 0);
-    const receiptTaxAmount = selectedTax ? Math.round(receiptSubtotal * (selectedTax.rate / 100) * 100) / 100 : 0;
-    const receiptDiscount = totalDiscount;
-    const receiptTotal = sale.totalAmount;
-
-    // Format date and time
-    const now = new Date();
-    const dateTime = now.toLocaleString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
+    const htmlContent = generateReceiptHTML({
+      sale,
+      storeInfo,
+      currentStaff,
+      getReceiptNumber
     });
-
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Receipt - ${sale.customerName}</title>
-          <style>
-            @media print {
-              body { margin: 0; padding: 10px; }
-              .no-print { display: none; }
-            }
-            body {
-              font-family: 'Courier New', monospace;
-              font-size: 12px;
-              line-height: 1.4;
-              max-width: 300px;
-              margin: 0 auto;
-              padding: 10px;
-              background: white;
-            }
-            .header {
-              text-align: center;
-              border-bottom: 2px solid #000;
-              padding-bottom: 10px;
-              margin-bottom: 15px;
-            }
-            .business-name {
-              font-size: 18px;
-              font-weight: bold;
-              margin-bottom: 5px;
-            }
-            .business-info {
-              font-size: 10px;
-              margin-bottom: 3px;
-            }
-            .receipt-title {
-              font-size: 14px;
-              font-weight: bold;
-              margin: 10px 0;
-              text-align: center;
-            }
-            .info-line {
-              display: flex;
-              justify-content: space-between;
-              margin-bottom: 3px;
-              font-size: 11px;
-            }
-            .divider {
-              border-top: 1px dashed #000;
-              margin: 8px 0;
-            }
-            .item-table {
-              width: 100%;
-              margin: 10px 0;
-            }
-            .item-row {
-              display: flex;
-              justify-content: space-between;
-              margin-bottom: 3px;
-              font-size: 11px;
-            }
-            .item-name {
-              flex: 1;
-              margin-right: 5px;
-            }
-            .item-qty {
-              width: 30px;
-              text-align: center;
-            }
-              color: #000;
-              font-size: 13px;
-              line-height: 1.4;
-            }
-            .center { text-align: center; }
-            .right { text-align: right; }
-            .business-name { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
-            .business-info { font-size: 11px; margin-bottom: 5px; }
-            .divider { border-top: 1px dashed #000; margin: 10px 0; }
-            .double-divider { border-top: 1px dashed #000; border-bottom: 1px dashed #000; height: 3px; margin: 10px 0; }
-            .receipt-title { font-size: 24px; font-weight: 700; margin: 10px 0; }
-            .item-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
-            .item-details { flex: 1; padding-right: 10px; }
-            .total-section { margin-top: 10px; font-weight: 700; }
-            .total-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
-            .thank-you { font-size: 18px; font-weight: 700; margin: 20px 0; }
-            .barcode { font-family: 'Libre Barcode 39', cursive; font-size: 40px; margin-top: 10px; }
-            @media print { margin: 0; }
-          </style>
-        </head>
-        <body>
-          <div class="center">
-            <div class="business-name">${storeInfo?.store_name || 'Zuri POS'}</div>
-            <div class="business-info">
-              ${storeInfo?.address ? `<div>${storeInfo.address}</div>` : ''}
-              ${storeInfo?.phone ? `<div>Tel: ${storeInfo.phone}</div>` : ''}
-              ${storeInfo?.tin_number ? `<div>TIN: ${storeInfo.tin_number}</div>` : ''}
-              ${storeInfo?.email ? `<div>${storeInfo.email}</div>` : ''}
-            </div>
-          </div>
-
-          <div class="double-divider"></div>
-          <div class="center receipt-title">RECEIPT</div>
-          <div class="double-divider"></div>
-
-          <div class="info-section">
-            <div class="item-row">
-              <span>Receipt:</span>
-              <span>#${sale.id.slice(-8).toUpperCase()}</span>
-            </div>
-            <div class="item-row">
-              <span>Date:</span>
-              <span>${dateTime}</span>
-            </div>
-            <div class="item-row">
-              <span>Customer:</span>
-              <span>${sale.customerName || 'Cash Customer'}</span>
-            </div>
-            <div class="item-row">
-              <span>Cashier:</span>
-              <span>${currentStaff.name}</span>
-            </div>
-          </div>
-
-          <div class="divider"></div>
-
-          ${sale.products.map((p: Product) => `
-            <div class="item-row">
-              <div class="item-details">${p.quantity}x ${p.productName}</div>
-              <div class="right">UGX ${(p.quantity * p.sellingPrice).toLocaleString()}</div>
-            </div>
-          `).join('')}
-
-          <div class="divider"></div>
-
-          <div class="total-section">
-            <div class="total-row">
-              <span>Subtotal:</span>
-              <span>UGX ${receiptSubtotal.toLocaleString()}</span>
-            </div>
-            ${receiptDiscount > 0 ? `
-            <div class="total-row">
-              <span>Discount:</span>
-              <span>-UGX ${receiptDiscount.toLocaleString()}</span>
-            </div>
-            ` : ''}
-            ${receiptTaxAmount > 0 ? `
-            <div class="total-row">
-              <span>Tax (${selectedTax?.name}):</span>
-              <span>UGX ${receiptTaxAmount.toLocaleString()}</span>
-            </div>
-            ` : ''}
-            <div class="divider"></div>
-            <div class="total-row" style="font-size: 16px;">
-              <span>TOTAL AMOUNT</span>
-              <span>UGX ${receiptTotal.toLocaleString()}</span>
-            </div>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="total-row">
-            <span>PAYMENT (${formData.paidInCash === false ? 'CREDIT' : (selectedPaymentMethodName || 'PAID')})</span>
-            <span>UGX ${(formData.paidInCash === false ? 0 : (amountReceivedNum > 0 ? amountReceivedNum : totalAmount)).toLocaleString()}</span>
-          </div>
-          ${formData.transactionReference ? `
-          <div style="font-size: 10px; margin-top: 5px;">
-            <div>Ref: ${formData.transactionReference}</div>
-          </div>` : ''}
-          ${formData.accountName || formData.payerName ? `
-          <div style="font-size: 10px;">
-            <div>Account: ${formData.accountName || formData.payerName}</div>
-          </div>` : ''}
-          ${formData.mobileMoneyNumber ? `
-          <div style="font-size: 10px;">
-            <div>Mobile: ${formData.mobileMoneyNumber}</div>
-          </div>` : ''}
-          <div class="total-row">
-            <span>CHANGE</span>
-            <span>UGX ${balance > 0 ? balance.toLocaleString() : '0'}</span>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="center">
-            <div class="thank-you">THANK YOU</div>
-            <div class="divider"></div>
-            <div style="font-size: 10px;">Goods once sold cannot be returned</div>
-            <div style="font-size: 9px; color: #666; margin-top: 5px;">Powered by Zuri POS</div>
-            <div class="barcode">*${sale.id.slice(-8)}*</div>
-          </div>
-        </body>
-      </html>
-    `;
 
     printWindow.document.write(htmlContent);
     printWindow.document.close();
