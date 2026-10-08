@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Search, Plus, Trash2, ShoppingCart, DollarSign, Printer, Loader2, User, CreditCard, Banknote, Receipt, Camera, History, Clock, Check, X, Undo2, Split } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDebounce } from "@/hooks/use-debounce";
+import { usePaymentAccounts } from "@/hooks/usePaymentAccounts";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { Product, SaleItem, StockItem, TaxConfig, PaymentMethod, Customer, Store as StoreType, Staff } from "@/types";
@@ -116,10 +117,17 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
   const [availablePaymentMethods, setAvailablePaymentMethods] = useState<PaymentMethod[]>([]);
   const [selectedTaxId, setSelectedTaxId] = useState<string | null>(null);
   const [selectedPaymentMethodId, setSelectedPaymentMethodId] = useState<string | null>(null);
-  const [paymentAccounts, setPaymentAccounts] = useState<Array<{ id: string; name: string; provider_type: string; account_number: string | null }>>([]);
+  // Receiving accounts are ledger-backed records, not payment gateways. Only active
+  // accounts for this branch are selectable. Query-backed so account changes made
+  // elsewhere show up in the checkout dropdown without a reload.
+  const paymentAccountsQuery = usePaymentAccounts(currentStoreId ?? null, true);
+  const paymentAccounts = (paymentAccountsQuery.data ?? []) as unknown as Array<{ id: string; name: string; provider_type: string; account_number: string | null }>;
   const [selectedPaymentAccountId, setSelectedPaymentAccountId] = useState<string | null>(null);
   const [splitPaymentOpen, setSplitPaymentOpen] = useState(false);
-  const [splitPayments, setSplitPayments] = useState<Array<{ accountId: string; amount: string }>>([]);
+  const [splitPayments, setSplitPayments] = useState<Array<{ accountId: string; amount: string }>>([])
+  // Edited separately from `splitPayments` so closing the dialog cannot silently
+  // drop an already-applied split.
+  const [splitDraft, setSplitDraft] = useState<Array<{ accountId: string; amount: string }>>([]);
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
@@ -273,21 +281,9 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
         }
       }
 
-      // Receiving accounts are a separate ledger-backed record. They are not a
-      // payment gateway and only active accounts from this branch are selectable.
-      const { data: accountRows, error: accountError } = await supabase
-        .from('branch_payment_accounts' as any).select('id, name, provider_type, account_number')
-        .eq('store_id', storeId).eq('is_active', true).order('name');
-      if (!accountError) {
-        // This table is introduced by a migration and is intentionally queried
-        // through the schema-fallback path. Narrow through `unknown` so the
-        // generated client does not treat the unknown relation as an error row.
-        const accounts = (accountRows || []) as unknown as Array<{ id: string; name: string; provider_type: string; account_number: string | null }>;
-        setPaymentAccounts(accounts);
-        // A cashier must intentionally choose where a paid sale was received.
-        // Never silently default this to the first account.
-        setSelectedPaymentAccountId(prev => prev && accounts.some(a => a.id === prev) ? prev : null);
-      }
+setSelectedPaymentAccountId(prev =>
+        prev && paymentAccountsQuery.data?.some((a) => a.id === prev) ? prev : null,
+      );
 
       // Get active shift to identify current cashier
       const { data: activeShift } = await supabase
@@ -449,7 +445,9 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
     const existingIndex = products.findIndex(p => String(p.id) === String(stockItem.id) && p.sellType === sellType);
     const itemsPerSachet = stockItem.items_per_sachet || 1;
 
-    const totalQuantity = stockItem.quantity || 0;
+    // Units flagged as damaged are held for review and must not be sold, so the
+// sellable figure is quantity minus damaged_quantity.
+const totalQuantity = Math.max(0, (stockItem.quantity || 0) - (stockItem.damaged_quantity || 0));
     const maxQty = sellType === 'sachet'
       ? Math.floor(totalQuantity / itemsPerSachet)
       : totalQuantity;
@@ -739,22 +737,24 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
         );
       }
 
-      // Cash ledger refund if applicable
+// Cash ledger refund if applicable
+      let cashRefundError: string | null = null;
       try {
         const originalMethod = (saleRow?.payment_details as any)?.paymentMethod?.toLowerCase?.() || '';
         const treatAsCash = refundOption === 'cash' || (refundOption === 'original' && originalMethod.includes('cash'));
         if (treatAsCash && computedTotal > 0) {
-          await supabase.from("cash_transactions").insert({
+          const { error: refundErr } = await supabase.from("cash_transactions").insert({
             user_id: user.id,
             store_id: storeId,
             amount: computedTotal,
             type: "out",
             description: `Refund for receipt ${receiptLabel(returnSale)}`,
             account_type: "cash",
-          });
+          } as any);
+          if (refundErr) cashRefundError = refundErr.message;
         }
-      } catch {
-        // ignore
+      } catch (e: any) {
+        cashRefundError = e?.message || String(e);
       }
 
       // Customer account adjustment for credit cases or scheduled/original non-cash
@@ -810,24 +810,30 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
       // Refresh app-wide caches so dashboard and all pages reflect the refund immediately
       try {
         // Refetch both store-scoped and global caches to cover different queryKey usages
-        queryClient.refetchQueries({ queryKey: ['sales', storeId], type: 'all' });
-        queryClient.refetchQueries({ queryKey: ['sales'], type: 'all' });
-        queryClient.refetchQueries({ queryKey: ['inventory', storeId], type: 'all' });
-        queryClient.refetchQueries({ queryKey: ['inventory'], type: 'all' });
-        queryClient.refetchQueries({ queryKey: ['cash_transactions', storeId], type: 'all' });
-        queryClient.refetchQueries({ queryKey: ['cash_transactions'], type: 'all' });
-        queryClient.refetchQueries({ queryKey: ['customers', storeId], type: 'all' });
-        queryClient.refetchQueries({ queryKey: ['customers'], type: 'all' });
-        queryClient.refetchQueries({ queryKey: ['sale_returns', storeId], type: 'all' });
-        queryClient.refetchQueries({ queryKey: ['sale_returns'], type: 'all' });
+        await Promise.all([
+          queryClient.refetchQueries({ queryKey: ['sales', storeId], type: 'all' }),
+          queryClient.refetchQueries({ queryKey: ['sales'], type: 'all' }),
+          queryClient.refetchQueries({ queryKey: ['inventory', storeId], type: 'all' }),
+          queryClient.refetchQueries({ queryKey: ['inventory'], type: 'all' }),
+          queryClient.refetchQueries({ queryKey: ['cash_transactions', storeId], type: 'all' }),
+          queryClient.refetchQueries({ queryKey: ['cash_transactions'], type: 'all' }),
+          queryClient.refetchQueries({ queryKey: ['customers', storeId], type: 'all' }),
+          queryClient.refetchQueries({ queryKey: ['customers'], type: 'all' }),
+          queryClient.refetchQueries({ queryKey: ['sale_returns', storeId], type: 'all' }),
+          queryClient.refetchQueries({ queryKey: ['sale_returns'], type: 'all' }),
+        ]);
+        await queryClient.invalidateQueries();
       } catch (e) {
         // ignore cache errors
       }
-      try {
-        // Force a broad invalidation as a fallback to ensure UI updates
-        queryClient.invalidateQueries();
-      } catch {}
 
+      if (cashRefundError) {
+        toast({
+          title: "Cash balance not reduced",
+          description: `The return was saved, but the cash refund could not be recorded (${cashRefundError}). Record an "out" entry for ${cur} ${computedTotal.toLocaleString()} on the Cash page so the till balance stays correct.`,
+          variant: "destructive",
+        });
+      }
       toast({ title: "Return Recorded", description: `Returned ${cur} ${payload.total_amount.toLocaleString()}` });
       setReturnDialogOpen(false);
       setReturnSale(null);
@@ -858,8 +864,14 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
 
   const amountReceivedNum = Math.round((parseFloat(amountReceived) || 0) * 100) / 100;
   const balance = Math.round((amountReceivedNum - totalAmount) * 100) / 100;
-  const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
   const splitRemaining = Math.max(0, totalAmount - splitTotal);
+  const splitDraftTotal = splitDraft.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+  const splitDraftRemaining = Math.max(0, totalAmount - splitDraftTotal);
+  // The same account twice would be persisted twice and double count downstream.
+  const splitDraftIds = splitDraft.map(p => p.accountId).filter(Boolean);
+  const splitDraftHasDuplicate = new Set(splitDraftIds).size !== splitDraftIds.length;
+  const splitApplied = splitPayments.length > 1;
 
   const handleBarcodeScan = async (code: string) => {
     setShowBarcodeScanner(false);
@@ -960,224 +972,207 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
     if (!printWindow) return;
 
     const savedPayment = sale.paymentDetails;
-    const savedPaymentMethod = sale.paidInCash ? (savedPayment?.paymentMethod || "PAID") : "CREDIT";
-    const savedAmountReceived = sale.paidInCash ? Number(savedPayment?.amountReceived ?? sale.totalAmount) : 0;
-    const savedChange = Math.max(0, savedAmountReceived - sale.totalAmount);
-
-    // Use the saved sale values when reprinting, so a later sale/form cannot change an old receipt.
-    const receiptSubtotal = sale.products.reduce((sum, p) => sum + (p.quantity * p.sellingPrice), 0);
-    const receiptTaxAmount = 0;
-    const receiptDiscount = 0;
+    const paymentMethod = sale.paidInCash ? (savedPayment?.paymentMethod || "Cash") : "CREDIT";
+    const amountPaid = sale.paidInCash ? Number(savedPayment?.amountReceived ?? sale.totalAmount) : 0;
+    const changeAmount = Math.max(0, amountPaid - sale.totalAmount);
     const receiptTotal = sale.totalAmount;
+    const totalItems = sale.products.reduce((s, p) => s + p.quantity, 0);
 
-    // Format date and time
     const originalDate = sale.created_at || sale.dateOfSale;
-    const dateTime = new Date(originalDate).toLocaleString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    });
+    const dateObj = new Date(originalDate);
+    const dateStr = dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'numeric', year: 'numeric' });
+    const timeStr = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
 
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Receipt - ${sale.customerName}</title>
-          <style>
-            @media print {
-              body { margin: 0; padding: 10px; }
-              .no-print { display: none; }
-            }
-            body {
-              font-family: 'Courier New', monospace;
-              font-size: 12px;
-              line-height: 1.4;
-              max-width: 300px;
-              margin: 0 auto;
-              padding: 10px;
-              background: white;
-            }
-            .header {
-              text-align: center;
-              border-bottom: 2px solid #000;
-              padding-bottom: 10px;
-              margin-bottom: 15px;
-            }
-            .business-name {
-              font-size: 18px;
-              font-weight: bold;
-              margin-bottom: 5px;
-            }
-            .business-info {
-              font-size: 10px;
-              margin-bottom: 3px;
-            }
-            .receipt-title {
-              font-size: 14px;
-              font-weight: bold;
-              margin: 10px 0;
-              text-align: center;
-            }
-            .info-line {
-              display: flex;
-              justify-content: space-between;
-              margin-bottom: 3px;
-              font-size: 11px;
-            }
-            .divider {
-              border-top: 1px dashed #000;
-              margin: 8px 0;
-            }
-            .item-table {
-              width: 100%;
-              margin: 10px 0;
-            }
-            .item-row {
-              display: flex;
-              justify-content: space-between;
-              margin-bottom: 3px;
-              font-size: 11px;
-            }
-            .item-name {
-              flex: 1;
-              margin-right: 5px;
-            }
-            .item-qty {
-              width: 30px;
-              text-align: center;
-            }
-              color: #000;
-              font-size: 13px;
-              line-height: 1.4;
-            }
-            .center { text-align: center; }
-            .right { text-align: right; }
-            .business-name { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
-            .business-info { font-size: 11px; margin-bottom: 5px; }
-            .divider { border-top: 1px dashed #000; margin: 10px 0; }
-            .double-divider { border-top: 1px dashed #000; border-bottom: 1px dashed #000; height: 3px; margin: 10px 0; }
-            .receipt-title { font-size: 24px; font-weight: 700; margin: 10px 0; }
-            .item-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
-            .item-details { flex: 1; padding-right: 10px; }
-            .total-section { margin-top: 10px; font-weight: 700; }
-            .total-row { display: flex; justify-content: space-between; margin-bottom: 3px; }
-            .thank-you { font-size: 18px; font-weight: 700; margin: 20px 0; }
-            .barcode { font-family: 'Libre Barcode 39', cursive; font-size: 40px; margin-top: 10px; }
-            @media print { margin: 0; }
-          </style>
-        </head>
-        <body>
-          <div class="center">
-            <div class="business-name">${storeInfo?.store_name || 'Zuri POS'}</div>
-            <div class="business-info">
-              ${storeInfo?.address ? `<div>${storeInfo.address}</div>` : ''}
-              ${storeInfo?.phone ? `<div>Tel: ${storeInfo.phone}</div>` : ''}
-              ${storeInfo?.tin_number ? `<div>TIN: ${storeInfo.tin_number}</div>` : ''}
-              ${storeInfo?.email ? `<div>${storeInfo.email}</div>` : ''}
-            </div>
-          </div>
+    const receiptNo = getReceiptNumber(sale);
+    // Generate a verification code from the receipt number + total
+    const verificationCode = `${receiptNo.replace(/\D/g,'').slice(-4)}${Math.floor(sale.totalAmount)}`.padEnd(20,'0').slice(0,20);
+    const tillNo = currentStaff.id ? '1' : '1';
 
-          <div class="double-divider"></div>
-          <div class="center receipt-title">RECEIPT</div>
-          <div class="double-divider"></div>
+    const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <title>Receipt #${receiptNo}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Libre+Barcode+39+Text&display=swap');
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 11px;
+      color: #000;
+      background: #fff;
+      width: 76mm;
+      margin: 0 auto;
+      padding: 4mm 3mm;
+    }
+    .center { text-align: center; }
+    .right  { text-align: right; }
+    .left   { text-align: left; }
+    .bold   { font-weight: bold; }
+    .large  { font-size: 14px; font-weight: bold; }
+    .xlarge { font-size: 16px; font-weight: bold; }
+    .small  { font-size: 9px; }
+    .dashed { border-top: 1px dashed #000; margin: 4px 0; }
+    .solid  { border-top: 1px solid #000; margin: 4px 0; }
+    .double { border-top: 3px double #000; margin: 4px 0; }
+    /* barcode font */
+    .barcode-font {
+      font-family: 'Libre Barcode 39 Text', 'Libre Barcode 39', cursive;
+      font-size: 36px;
+      letter-spacing: 2px;
+      line-height: 1;
+    }
+    /* items table */
+    table { width: 100%; border-collapse: collapse; }
+    .items-head th {
+      font-size: 10px;
+      font-weight: bold;
+      border-top: 1px solid #000;
+      border-bottom: 1px solid #000;
+      padding: 2px 0;
+    }
+    .items-head th.r { text-align: right; }
+    .item-row td { font-size: 10px; padding: 1px 0; vertical-align: top; }
+    .item-row td.r { text-align: right; }
+    .totals-row { display: flex; justify-content: space-between; padding: 1px 0; }
+    .vat-table th, .vat-table td { font-size: 10px; padding: 1px 3px; text-align: right; }
+    .vat-table th:first-child, .vat-table td:first-child { text-align: left; }
+    .qr-placeholder {
+      width: 64px; height: 64px;
+      border: 1px solid #000;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 8px; color: #555;
+    }
+    @media print {
+      body { width: 76mm; margin: 0; padding: 2mm; }
+      @page { size: 80mm auto; margin: 0; }
+    }
+  </style>
+</head>
+<body>
 
-          <div class="info-section">
-            <div class="item-row">
-              <span>Receipt:</span>
-              <span>#${getReceiptNumber(sale)}</span>
-            </div>
-            <div class="item-row">
-              <span>Date:</span>
-              <span>${dateTime}</span>
-            </div>
-            <div class="item-row">
-              <span>Customer:</span>
-              <span>${sale.customerName || 'Cash Customer'}</span>
-            </div>
-            <div class="item-row">
-              <span>Cashier:</span>
-              <span>${currentStaff.name}</span>
-            </div>
-          </div>
+  <!-- BUSINESS HEADER -->
+  <div class="center">
+    <div class="xlarge">${storeInfo?.store_name || 'Zuri POS'}</div>
+    ${storeInfo?.address ? `<div>${storeInfo.address}</div>` : ''}
+    ${storeInfo?.tin_number ? `<div>Tin : ${storeInfo.tin_number} VAT: ${(storeInfo as any)?.vat_number || storeInfo.tin_number}</div>` : ''}
+    ${storeInfo?.phone ? `<div>Tel: ${storeInfo.phone}</div>` : ''}
+  </div>
 
-          <div class="divider"></div>
+  <!-- BARCODE OF RECEIPT NUMBER -->
+  <div class="center" style="margin:4px 0 2px;">
+    <div class="barcode-font">*${receiptNo}*</div>
+  </div>
 
-          ${sale.products.map((p: Product) => `
-            <div class="item-row">
-              <div class="item-details">${p.quantity}x ${p.productName}</div>
-              <div class="right">${cur} ${(p.quantity * p.sellingPrice).toLocaleString()}</div>
-            </div>
-          `).join('')}
+  <div class="dashed"></div>
 
-          <div class="divider"></div>
+  <!-- RECEIPT META -->
+  <div class="totals-row"><span>Receipt No</span><span class="bold">${receiptNo}</span></div>
+  <div class="totals-row"><span></span><span class="bold">TAX INVOICE / CASH SALE</span></div>
+  <div class="totals-row"><span></span><span>Till ${tillNo}</span></div>
+  <div class="totals-row"><span>Date</span><span>${dateStr}</span></div>
 
-          <div class="total-section">
-            <div class="total-row">
-              <span>Subtotal:</span>
-              <span>${cur} ${receiptSubtotal.toLocaleString()}</span>
-            </div>
-            ${receiptDiscount > 0 ? `
-            <div class="total-row">
-              <span>Discount:</span>
-              <span>-${cur} ${receiptDiscount.toLocaleString()}</span>
-            </div>
-            ` : ''}
-            ${receiptTaxAmount > 0 ? `
-            <div class="total-row">
-              <span>Tax (${selectedTax?.name}):</span>
-              <span>${cur} ${receiptTaxAmount.toLocaleString()}</span>
-            </div>
-            ` : ''}
-            <div class="divider"></div>
-            <div class="total-row" style="font-size: 16px;">
-              <span>TOTAL AMOUNT</span>
-              <span>${cur} ${receiptTotal.toLocaleString()}</span>
-            </div>
-          </div>
+  <div class="dashed"></div>
 
-          <div class="divider"></div>
+  <!-- ITEMS TABLE -->
+  <table>
+    <thead class="items-head">
+      <tr>
+        <th class="left" style="width:40%">ITEM</th>
+        <th class="r" style="width:10%">QTY</th>
+        <th class="r" style="width:12%">PACK</th>
+        <th class="r" style="width:18%">PRICE</th>
+        <th class="r" style="width:20%">AMOUNT</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${sale.products.map((p: Product) => {
+        const unitPrice = p.sellingPrice;
+        const lineTotal = p.quantity * unitPrice;
+        return `<tr class="item-row">
+          <td>${p.productName}</td>
+          <td class="r">${p.quantity}</td>
+          <td class="r">PACK</td>
+          <td class="r">${unitPrice.toLocaleString()}</td>
+          <td class="r">${lineTotal.toLocaleString()}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>
 
-          <div class="total-row">
-            <span>PAYMENT (${savedPaymentMethod})</span>
-            <span>${cur} ${savedAmountReceived.toLocaleString()}</span>
-          </div>
-          ${savedPayment?.transactionReference ? `
-          <div style="font-size: 10px; margin-top: 5px;">
-            <div>Ref: ${savedPayment.transactionReference}</div>
-          </div>` : ''}
-          ${savedPayment?.accountName || savedPayment?.payerName ? `
-          <div style="font-size: 10px;">
-            <div>Account: ${savedPayment.accountName || savedPayment.payerName}</div>
-          </div>` : ''}
-          ${savedPayment?.mobileMoneyNumber ? `
-          <div style="font-size: 10px;">
-            <div>Mobile: ${savedPayment.mobileMoneyNumber}</div>
-          </div>` : ''}
-          <div class="total-row">
-            <span>CHANGE</span>
-            <span>${cur} ${savedChange.toLocaleString()}</span>
-          </div>
+  <div class="dashed"></div>
 
-          <div class="divider"></div>
+  <!-- TOTALS -->
+  <div class="totals-row"><span>Total items :</span><span>${totalItems}</span></div>
+  <div class="dashed"></div>
+  <div class="totals-row bold"><span>Total</span><span>${receiptTotal.toLocaleString()}</span></div>
+  <div class="totals-row"><span>${paymentMethod}</span><span>${amountPaid.toLocaleString()}</span></div>
+  <div class="totals-row"><span>Change</span><span>${changeAmount.toLocaleString()}</span></div>
 
-          <div class="center">
-            <div class="thank-you">THANK YOU</div>
-            <div class="divider"></div>
-            <div style="font-size: 10px;">Goods once sold cannot be returned</div>
-            <div style="font-size: 9px; color: #666; margin-top: 5px;">Powered by Zuri POS</div>
-            <div class="barcode">*${getReceiptNumber(sale)}*</div>
-          </div>
-        </body>
-      </html>
-    `;
+  <div class="dashed"></div>
+
+  <!-- VAT SECTION -->
+  <table class="vat-table" style="width:100%">
+    <thead>
+      <tr>
+        <th>VAT Rate</th>
+        <th>Amt W/o VAT</th>
+        <th>VAT Amt</th>
+        <th>Net Amt</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>EXEMPT</td>
+        <td>${receiptTotal.toLocaleString()}</td>
+        <td>0.00</td>
+        <td>${receiptTotal.toLocaleString()}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="dashed"></div>
+
+  <!-- NOTES -->
+  <div class="small center" style="margin:4px 0;">
+    <div>Note: GOODS ONCE SOLD ARE NOT</div>
+    <div>RETURNABLE GOODS SOLD IN CONDITION AND</div>
+    <div>CHECKED</div>
+    <div style="margin-top:2px;">Prices Inclusive of Vat Where Applicable</div>
+  </div>
+
+  <div class="dashed"></div>
+
+  <!-- VERIFICATION CODE -->
+  <div class="totals-row small">
+    <span>Verification Code :</span>
+    <span>${verificationCode}</span>
+  </div>
+
+  <!-- QR + SERVED BY -->
+  <div style="display:flex; align-items:center; gap:8px; margin:6px 0;">
+    <div class="qr-placeholder">QR</div>
+    <div>
+      <div>You Were Served By &nbsp; <span class="bold">${currentStaff.name}</span></div>
+      <div style="margin-top:2px;">Till${tillNo}</div>
+      <div class="small" style="margin-top:4px;">Thank You !! Please come again.</div>
+    </div>
+  </div>
+
+  <div class="dashed"></div>
+
+  <!-- RECEIPT TIME -->
+  <div class="center small">Receipt Time :- ${dateStr} ${timeStr}</div>
+
+  <script>window.onload=function(){window.print();window.onafterprint=function(){window.close();};};</script>
+</body>
+</html>`;
 
     printWindow.document.write(htmlContent);
     printWindow.document.close();
     printWindow.focus();
-    setTimeout(() => printWindow.print(), 250);
+  };
+
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1285,19 +1280,28 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
       return;
     }
 
-    if (hasSplitPayment && (!splitPayments.every(payment => payment.accountId && Number(payment.amount) > 0) || Math.abs(splitTotal - totalAmount) >= 0.01)) {
-      toast({ title: "Split payment is incomplete", description: `Payment amounts must total ${cur} ${totalAmount.toLocaleString()}.`, variant: "destructive" });
-      submitLockRef.current = false;
-      return;
+if (hasSplitPayment) {
+      const splitIds = splitPayments.map(p => p.accountId).filter(Boolean);
+      if (new Set(splitIds).size !== splitIds.length) {
+        toast({ title: "Duplicate account in split", description: "Each account can only receive payment once. Reopen Split to fix it.", variant: "destructive" });
+        submitLockRef.current = false;
+        return;
+      }
+      if (!splitPayments.every(payment => payment.accountId && Number(payment.amount) > 0) || Math.abs(splitTotal - totalAmount) >= 0.01) {
+        toast({ title: "Split payment is incomplete", description: `Payment amounts must total ${cur} ${totalAmount.toLocaleString()}.`, variant: "destructive" });
+        submitLockRef.current = false;
+        return;
+      }
     }
 
     const impliedAmountReceived =
       amountReceivedNum > 0 ? amountReceivedNum : (isPaidSale ? totalAmount : 0);
 
     // Enforce complete sale details for non-cash payments
-    const method = availablePaymentMethods.find(m => m.id === resolvedPaymentMethodId);
-    const isCashMethod = !!method && method.name.toLowerCase().includes('cash');
-    const requiresPaymentDetails = isPaidSale && !isCashMethod;
+const method = availablePaymentMethods.find(m => m.id === resolvedPaymentMethodId);
+const hasMethodRow = !!method;
+const isCashMethod = hasMethodRow && method!.name.toLowerCase().includes('cash');
+const requiresPaymentDetails = isPaidSale && hasMethodRow && !isCashMethod;
 
     if (requiresPaymentDetails) {
       // Determine required fields by method type
@@ -1486,10 +1490,13 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
       // Stay on new-sale tab — don't switch to history
 
       // Force refetch all React Query caches so dashboard, reports, history all update instantly
-      queryClient.refetchQueries({ queryKey: ["sales"], type: 'all' });
-      queryClient.refetchQueries({ queryKey: ["cash_transactions"], type: 'all' });
-      queryClient.refetchQueries({ queryKey: ["inventory"], type: 'all' });
-      queryClient.refetchQueries({ queryKey: ["customers"], type: 'all' });
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ["sales"], type: 'all' }),
+        queryClient.refetchQueries({ queryKey: ["cash_transactions"], type: 'all' }),
+        queryClient.refetchQueries({ queryKey: ["inventory"], type: 'all' }),
+        queryClient.refetchQueries({ queryKey: ["customers"], type: 'all' }),
+      ]);
+      await queryClient.invalidateQueries();
 
       // Update customer totals after sale in the background (non-blocking for fast checkout).
       if (selectedCustomerId) {
@@ -1660,15 +1667,19 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           <TabsList className="grid grid-cols-3">
-            <TabsTrigger value="new-sale" className="gap-2">
+            {/* `self-stretch w-full` makes the whole tab pill clickable instead of
+                just the glyph+text. The base TabsList sets `items-center`, which
+                shrinks each grid item to content height, so taps only landed when
+                pointing directly at the label. Outer box stays 40px, unchanged. */}
+            <TabsTrigger value="new-sale" className="w-full self-stretch gap-2">
               <ShoppingCart className="h-4 w-4" />
               New Sale
             </TabsTrigger>
-            <TabsTrigger value="pending" className="gap-2">
+            <TabsTrigger value="pending" className="w-full self-stretch gap-2">
               <Clock className="h-4 w-4" />
               Pending
             </TabsTrigger>
-            <TabsTrigger value="history" className="gap-2" onClick={() => { setActiveTab("history"); fetchSalesHistory(); }}>
+            <TabsTrigger value="history" className="w-full self-stretch gap-2" onClick={() => { setActiveTab("history"); fetchSalesHistory(); }}>
               <History className="h-4 w-4" />
               History
             </TabsTrigger>
@@ -2205,8 +2216,9 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
                                 const account = paymentAccounts.find(item => item.id === accountId);
                                 setSelectedPaymentAccountId(accountId);
                                 const matchingMethod = availablePaymentMethods.find(method => method.name.toLowerCase().includes(account?.provider_type?.replace(/_/g, " ") || ""));
-                                setSelectedPaymentMethodId(matchingMethod?.id || null);
+setSelectedPaymentMethodId(matchingMethod?.id || null);
                                 setSplitPayments([]);
+                                setSplitDraft([]);
                                 setFormData((prev) => ({ ...prev, paidInCash: true }));
                               }}
                             >
@@ -2221,7 +2233,16 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
                                 ))}
                               </SelectContent>
                             </Select>
-                            <Dialog open={splitPaymentOpen} onOpenChange={(nextOpen) => { if (nextOpen) setSplitPayments([{ accountId: selectedPaymentAccountId || paymentAccounts[0]?.id || "", amount: String(totalAmount) }]); setSplitPaymentOpen(nextOpen); }}>
+                            <Dialog open={splitPaymentOpen} onOpenChange={(nextOpen) => {
+                                // Seed a draft on open and discard it on close, so an
+                                // abandoned edit never alters the applied split.
+                                if (nextOpen) {
+                                  setSplitDraft(splitPayments.length > 1
+                                    ? splitPayments.map(p => ({ ...p }))
+                                    : [{ accountId: selectedPaymentAccountId || paymentAccounts[0]?.id || "", amount: String(totalAmount) }]);
+                                }
+                                setSplitPaymentOpen(nextOpen);
+                              }}>
                               <DialogTrigger asChild>
                                 <Button variant="outline" size="sm" className="h-9 shrink-0 gap-1" disabled={paymentAccounts.length < 2}>
                                   <Split className="h-4 w-4" /> Split
@@ -2230,18 +2251,47 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
                               <DialogContent className="sm:max-w-lg">
                                 <DialogHeader><DialogTitle>Split payment</DialogTitle><DialogDescription>Select the first account, enter its amount, then add the next account until the sale total is covered.</DialogDescription></DialogHeader>
                                 <div className="space-y-4">
-                                  {splitPayments.map((payment, index) => <div key={`${index}-${payment.accountId}`} className="grid gap-2 sm:grid-cols-[1fr_150px_auto]"><Select value={payment.accountId} onValueChange={value => setSplitPayments(current => current.map((row, rowIndex) => rowIndex === index ? { ...row, accountId: value } : row))}><SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger><SelectContent>{paymentAccounts.map(account => <SelectItem key={account.id} value={account.id}>{account.name} · {account.provider_type.replace(/_/g, " ")}</SelectItem>)}</SelectContent></Select><Input type="number" min="0" value={payment.amount} onChange={event => setSplitPayments(current => current.map((row, rowIndex) => rowIndex === index ? { ...row, amount: event.target.value } : row))} placeholder="Amount" /><Button type="button" variant="ghost" size="icon" onClick={() => setSplitPayments(current => current.filter((_, rowIndex) => rowIndex !== index))} disabled={splitPayments.length === 1}><X className="h-4 w-4" /></Button></div>)}
-                                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-primary/5 p-3 text-sm"><span>Remaining: <strong className="text-primary">{cur} {splitRemaining.toLocaleString()}</strong></span><Button type="button" variant="outline" size="sm" onClick={() => setSplitPayments(current => [...current, { accountId: "", amount: String(splitRemaining) }])}><Split className="mr-1 h-4 w-4" />Next method</Button></div>
-                                  <div className="flex justify-end"><Button type="button" onClick={() => { const valid = splitPayments.length > 1 && splitPayments.every(payment => payment.accountId && Number(payment.amount) > 0) && Math.abs(splitTotal - totalAmount) < 0.01; if (!valid) { toast({ title: "Payment total must match", description: `Enter accounts and amounts totaling ${cur} ${totalAmount.toLocaleString()}.`, variant: "destructive" }); return; } setSelectedPaymentAccountId(splitPayments[0].accountId); setAmountReceived(String(totalAmount)); setFormData(prev => ({ ...prev, paidInCash: true })); setSplitPaymentOpen(false); }}>Apply split payment</Button></div>
+                                  {splitDraft.map((payment, index) => <div key={`${index}-${payment.accountId}`} className="grid gap-2 sm:grid-cols-[1fr_150px_auto]"><Select value={payment.accountId} onValueChange={value => setSplitDraft(current => current.map((row, rowIndex) => rowIndex === index ? { ...row, accountId: value } : row))}><SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger><SelectContent>{paymentAccounts.map(account => { const takenByAnother = splitDraft.some((row, rowIndex) => rowIndex !== index && row.accountId === account.id); return <SelectItem key={account.id} value={account.id} disabled={takenByAnother}>{account.name} · {account.provider_type.replace(/_/g, " ")}{takenByAnother ? " (already used)" : ""}</SelectItem>; })}</SelectContent></Select><Input type="number" min="0" value={payment.amount} onChange={event => setSplitDraft(current => current.map((row, rowIndex) => rowIndex === index ? { ...row, amount: event.target.value } : row))} placeholder="Amount" /><Button type="button" variant="ghost" size="icon" onClick={() => setSplitDraft(current => current.filter((_, rowIndex) => rowIndex !== index))} disabled={splitDraft.length === 1}><X className="h-4 w-4" /></Button></div>)}
+<div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-primary/5 p-3 text-sm"><span>Remaining: <strong className="text-primary">{cur} {splitDraftRemaining.toLocaleString()}</strong></span><Button type="button" variant="outline" size="sm" onClick={() => setSplitDraft(current => [...current, { accountId: "", amount: String(splitDraftRemaining) }])}><Split className="mr-1 h-4 w-4" />Next method</Button></div>
+                                  {splitDraftHasDuplicate && <p className="text-xs text-destructive">The same account is selected twice. Pick a different account for one of the rows.</p>}
+                                  <div className="flex justify-end"><Button type="button" onClick={() => {
+                                    if (splitDraftHasDuplicate) { toast({ title: "Duplicate account", description: "Each account can only receive payment once.", variant: "destructive" }); return; }
+                                    if (!splitDraft.every(payment => payment.accountId && Number(payment.amount) > 0) || Math.abs(splitDraftTotal - totalAmount) >= 0.01) {
+                                      toast({ title: "Payment total must match", description: `Enter accounts and amounts totaling ${cur} ${totalAmount.toLocaleString()}.`, variant: "destructive" }); return;
+                                    }
+                                    if (splitDraft.length < 2) { toast({ title: "Add another method", description: "A split needs at least two accounts.", variant: "destructive" }); return; }
+                                    const firstAccount = paymentAccounts.find(account => account.id === splitDraft[0].accountId);
+                                    // The account Select normally syncs the method id; Apply
+                                    // bypasses it, so set it here or a completed split is
+                                    // rejected as "Payment Method Required".
+                                    const matchingMethod = availablePaymentMethods.find(method => method.name.toLowerCase().includes(firstAccount?.provider_type?.replace(/_/g, " ") || ""));
+                                    setSplitPayments(splitDraft.map(p => ({ accountId: p.accountId, amount: p.amount })));
+                                    setSelectedPaymentAccountId(splitDraft[0].accountId);
+                                    setSelectedPaymentMethodId(matchingMethod?.id || selectedPaymentMethodId);
+                                    setAmountReceived(String(totalAmount));
+                                    setFormData(prev => ({ ...prev, paidInCash: true }));
+                                    setSplitPaymentOpen(false);
+                                  }}>Apply split payment</Button></div>
                                 </div>
                               </DialogContent>
                             </Dialog>
                           </div>
                           {paymentAccounts.length === 0 && <p className="text-[10px] text-destructive">No active accounts found. Configure payment accounts first.</p>}
+                          {splitApplied && (
+                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-primary/5 px-3 py-2 text-xs">
+                              <span className="text-muted-foreground">
+                                Split across {splitPayments.length} accounts:{" "}
+                                {splitPayments.map(p => `${cur} ${(Number(p.amount) || 0).toLocaleString()}`).join(" + ")}
+                              </span>
+                              <Button type="button" variant="ghost" size="sm" className="h-7 gap-1" onClick={() => { setSplitPayments([]); setSplitDraft([]); }}>
+                                <X className="h-3 w-3" />Clear split
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       )}
 
-                      {formData.paidInCash === true && paymentAccounts.length > 0 && (
+                      {formData.paidInCash === true && paymentAccounts.length > 0 && !selectedPaymentAccountId && (
                         <div className="space-y-1">
                           <Label className="text-xs">Receiving account <span className="text-destructive">*</span></Label>
                           <Select value={selectedPaymentAccountId || ""} onValueChange={setSelectedPaymentAccountId}>
