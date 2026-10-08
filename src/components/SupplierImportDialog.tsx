@@ -2,7 +2,7 @@ import React, { useState, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -435,6 +435,9 @@ export default function SupplierImportDialog({
               </Badge>
             )}
           </DialogTitle>
+          <DialogDescription>
+            Upload and import supplier data with advanced column mapping and duplicate handling
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-hidden">
@@ -613,14 +616,14 @@ John Wholesale,XYZ Company,+256701111111,john@xyz.com,"Entebbe, Uganda","Fast de
                       
                       <div className="flex-1">
                         <Select
-                          value={mapping.targetField}
-                          onValueChange={(value) => updateColumnMapping(mapping.sourceColumn, value, false)}
+                          value={mapping.targetField || "__skip__"}
+                          onValueChange={(value) => updateColumnMapping(mapping.sourceColumn, value === "__skip__" ? "" : value, false)}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select field" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">Don't import</SelectItem>
+                            <SelectItem value="__skip__">Don't import</SelectItem>
                             {STANDARD_FIELDS.map(field => (
                               <SelectItem key={field.key} value={field.key}>
                                 {field.label} {field.required && <span className="text-red-500">*</span>}
