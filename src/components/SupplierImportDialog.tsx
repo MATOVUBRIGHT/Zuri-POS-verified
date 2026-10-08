@@ -359,35 +359,54 @@ export default function SupplierImportDialog({
             skipped++;
             continue;
           } else if (duplicateStrategy === 'update') {
-            // Use the custom update function
-            const { data, error } = await supabase.rpc('update_supplier_with_custom_fields', {
-              supplier_id: duplicate.existing.id,
-              supplier_data: supplierData,
-              custom_data: customFieldData
-            });
+            // Standard update operation
+            const updateData = { ...supplierData };
+            
+            // Merge custom fields with notes if they exist
+            if (Object.keys(customFieldData).length > 0) {
+              const existingNotes = updateData.notes || '';
+              const customFieldsJson = JSON.stringify(customFieldData);
+              updateData.notes = existingNotes + (existingNotes ? '\n' : '') + `Custom Fields: ${customFieldsJson}`;
+            }
+            
+            const { error } = await supabase
+              .from('suppliers')
+              .update(updateData)
+              .eq('id', duplicate.existing.id);
 
             if (error) throw error;
             updated++;
           } else { // create new
             supplierData.name = `${supplierData.name} (${Date.now()})`;
             
-            // Use the custom create function
-            const { data, error } = await supabase.rpc('create_supplier_with_custom_fields', {
-              supplier_data: supplierData,
-              custom_data: customFieldData
-            });
+            // Add custom fields to notes
+            if (Object.keys(customFieldData).length > 0) {
+              const existingNotes = supplierData.notes || '';
+              const customFieldsJson = JSON.stringify(customFieldData);
+              supplierData.notes = existingNotes + (existingNotes ? '\n' : '') + `Custom Fields: ${customFieldsJson}`;
+            }
+            
+            const { error } = await supabase
+              .from('suppliers')
+              .insert([supplierData]);
 
             if (error) throw error;
             created++;
           }
         } else {
-          // Create new supplier using custom function
+          // Create new supplier
           supplierData.created_at = new Date().toISOString();
           
-          const { data, error } = await supabase.rpc('create_supplier_with_custom_fields', {
-            supplier_data: supplierData,
-            custom_data: customFieldData
-          });
+          // Add custom fields to notes
+          if (Object.keys(customFieldData).length > 0) {
+            const existingNotes = supplierData.notes || '';
+            const customFieldsJson = JSON.stringify(customFieldData);
+            supplierData.notes = existingNotes + (existingNotes ? '\n' : '') + `Custom Fields: ${customFieldsJson}`;
+          }
+          
+          const { error } = await supabase
+            .from('suppliers')
+            .insert([supplierData]);
 
           if (error) throw error;
           created++;
