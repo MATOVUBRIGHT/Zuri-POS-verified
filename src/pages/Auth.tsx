@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { Store as StoreIcon, Mail, Lock, User, Shield, Eye, EyeOff, ArrowRight } from "lucide-react";
+import { Mail, Lock, User, Shield, Eye, EyeOff, ArrowRight } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { z } from "zod";
@@ -294,7 +294,7 @@ const Auth = () => {
       <p>Last updated: {new Date().toLocaleDateString()}</p>
       
       <h4 className="font-medium text-foreground mt-4">1. Acceptance of Terms</h4>
-      <p>By accessing and using brec Inventory Manager, you accept and agree to be bound by the terms and provisions of this agreement.</p>
+      <p>By accessing and using Zuri POS Inventory Manager, you accept and agree to be bound by the terms and provisions of this agreement.</p>
       
       <h4 className="font-medium text-foreground mt-4">2. Use of Service</h4>
       <p>You agree to use this service only for lawful purposes and in accordance with these Terms. You are responsible for maintaining the confidentiality of your account credentials.</p>
@@ -363,13 +363,17 @@ const Auth = () => {
 
       <Card className="w-full max-w-md shadow-xl border-border/20 bg-background/40 backdrop-blur-md relative z-10">
         <CardHeader className="space-y-3 text-center">
-          <div className="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-lg">
-            <StoreIcon className="w-8 h-8 text-primary-foreground" />
+          <div className="mx-auto h-28 w-28 rounded-2xl border border-white/10 bg-black p-2.5 shadow-lg">
+            <img
+              src="/zuri-pos-logo.png"
+              alt="Zuri POS logo"
+              className="h-full w-full object-contain"
+            />
           </div>
-          <CardTitle className="text-3xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-            brec
+          <CardTitle className="text-2xl font-bold tracking-tight text-foreground">
+            Zuri POS
           </CardTitle>
-          <CardDescription>
+          <CardDescription className="text-sm text-muted-foreground">
             Stock and Inventory Management
           </CardDescription>
         </CardHeader>

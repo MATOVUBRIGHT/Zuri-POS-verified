@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+﻿import { useMemo, useState, useEffect, useRef } from "react";
 import { fmtCurrency, getCurrencySymbol } from "@/lib/currency";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -77,7 +77,7 @@ interface LayoutProps {
   executiveMode?: boolean;
   onReturnToExecutive?: () => void;
   branchName?: string;
-  /** Authenticated user ID — required for ExecChat in executive mode */
+  /** Authenticated user ID â€” required for ExecChat in executive mode */
   userId?: string | null;
 }
 
@@ -150,7 +150,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
       // In web app, sync means full refetch of all relevant tables
       await queryClient.refetchQueries();
       if (onRefresh) await Promise.resolve(onRefresh());
-      toast({ title: "✓ Sync Complete", description: "All data refreshed from Supabase" });
+      toast({ title: "âœ“ Sync Complete", description: "All data refreshed from Supabase" });
     } catch (error: any) {
       toast({ title: "Refresh Failed", description: error.message, variant: "destructive" });
     } finally {
@@ -553,6 +553,11 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
             >
               {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
             </Button>
+            <img
+              src="/zuri-pos-icon-512.png"
+              alt="Zuri POS logo"
+              className="h-10 w-10 rounded-lg border border-white/10 bg-black object-contain p-1 shadow-sm"
+            />
             <div className="flex flex-col">
               <h1 className="text-xl font-bold text-foreground">{executiveMode ? (userRole === "accountant" ? "Finance Space" : "Zuri Executive") : branchName || store?.store_name || 'Business'}</h1>
               <p className="text-xs text-muted-foreground">{executiveMode ? (userRole === "accountant" ? "Finance control room" : "Portfolio control room") : branchName ? "Branch POS" : "Powered by Zuri POS"}</p>
@@ -564,7 +569,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
                 <Clock size={14} className="text-foreground" />
                 <span className="text-sm font-mono font-medium text-foreground">{formatTime(currentTime)}</span>
               </div>
-              <span className="text-muted-foreground">•</span>
+              <span className="text-muted-foreground">â€¢</span>
               <span className="text-sm text-muted-foreground">{formatDate(currentTime)}</span>
             </div>
           </div>
@@ -659,7 +664,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
                                       </div>
                                     </div>
                                     <span className="text-xs text-muted-foreground group-hover:text-primary ml-2">
-                                      Open →
+                                      Open â†’
                                     </span>
                                   </div>
                                 </button>
@@ -706,7 +711,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
                                     <n.icon size={14} />
                                     {n.label}
                                   </span>
-                                  <span className="text-xs text-muted-foreground">Go →</span>
+                                  <span className="text-xs text-muted-foreground">Go â†’</span>
                                 </button>
                               ))}
                           </div>
@@ -871,7 +876,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
                               <div className="min-w-0">
                                 <div className="font-medium truncate">{s.name}</div>
                                 <div className="text-[11px] text-muted-foreground truncate">
-                                  {s.company || "Supplier"} • {new Date(s.updated_at).toLocaleString()}
+                                  {s.company || "Supplier"} â€¢ {new Date(s.updated_at).toLocaleString()}
                                 </div>
                               </div>
                               <div className="text-right">
