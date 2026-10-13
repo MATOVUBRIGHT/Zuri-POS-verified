@@ -1,4 +1,4 @@
-﻿import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { fmtCurrency, getCurrencySymbol } from "@/lib/currency";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,7 @@ import StoreChat from "@/components/StoreChat";
 import ExecChat from "@/components/ExecChat";
 import ScheduledPaymentPrompt from "@/components/ScheduledPaymentPrompt";
 import UserProfile from "@/components/UserProfile";
+import { AppSkeleton } from "@/components/AppSkeleton";
 
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -77,7 +78,7 @@ interface LayoutProps {
   executiveMode?: boolean;
   onReturnToExecutive?: () => void;
   branchName?: string;
-  /** Authenticated user ID â€” required for ExecChat in executive mode */
+  /** Authenticated user ID — required for ExecChat in executive mode */
   userId?: string | null;
 }
 
@@ -150,7 +151,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
       // In web app, sync means full refetch of all relevant tables
       await queryClient.refetchQueries();
       if (onRefresh) await Promise.resolve(onRefresh());
-      toast({ title: "âœ“ Sync Complete", description: "All data refreshed from Supabase" });
+      toast({ title: "✓ Sync Complete", description: "All data refreshed from Supabase" });
     } catch (error: any) {
       toast({ title: "Refresh Failed", description: error.message, variant: "destructive" });
     } finally {
@@ -424,6 +425,8 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
     }));
   }, [productIndex, searchQuery]);
 
+  const showPageSkeleton = Boolean(dataLoading && stockData.length === 0);
+
   const navigationIcons = { dashboard: LayoutDashboard, products: Boxes, suppliers: Truck, "stock-entry": Package, "sales-entry": ShoppingCart, inventory: Warehouse, "stock-transfers": ArrowLeftRight, "barcode-manager": Barcode, customers: Users, expenses: Receipt, accounts: Landmark, banking: Banknote, returns: Undo2, shifts: Clock, reports: FileText, resellers: Handshake, stores: Store, security: Shield, settings: SettingsIcon, "scheduled-payments": Receipt, admin: Shield };
   const navigationItems = [
     // Executive-only entry points are intentionally not available to branch staff.
@@ -569,7 +572,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
                 <Clock size={14} className="text-foreground" />
                 <span className="text-sm font-mono font-medium text-foreground">{formatTime(currentTime)}</span>
               </div>
-              <span className="text-muted-foreground">â€¢</span>
+              <span className="text-muted-foreground">•</span>
               <span className="text-sm text-muted-foreground">{formatDate(currentTime)}</span>
             </div>
           </div>
@@ -664,7 +667,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
                                       </div>
                                     </div>
                                     <span className="text-xs text-muted-foreground group-hover:text-primary ml-2">
-                                      Open â†’
+                                      Open →
                                     </span>
                                   </div>
                                 </button>
@@ -711,7 +714,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
                                     <n.icon size={14} />
                                     {n.label}
                                   </span>
-                                  <span className="text-xs text-muted-foreground">Go â†’</span>
+                                  <span className="text-xs text-muted-foreground">Go →</span>
                                 </button>
                               ))}
                           </div>
@@ -774,8 +777,9 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
             )}
             
             {(isSyncing || isRefreshing || dataLoading) && (
-              <div className="flex items-center gap-2 px-2 py-1 bg-primary/10 rounded-full animate-pulse border border-primary/20">
+              <div role="status" aria-live="polite" aria-atomic="true" className="flex items-center gap-2 px-2 py-1 bg-primary/10 rounded-full animate-pulse border border-primary/20">
                 <RefreshCw size={12} className="animate-spin text-primary" />
+                <span className="sr-only">Refreshing data</span>
                 <span className="text-[10px] font-medium text-primary uppercase tracking-wider hidden lg:inline">Updating</span>
               </div>
             )}
@@ -876,7 +880,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
                               <div className="min-w-0">
                                 <div className="font-medium truncate">{s.name}</div>
                                 <div className="text-[11px] text-muted-foreground truncate">
-                                  {s.company || "Supplier"} â€¢ {new Date(s.updated_at).toLocaleString()}
+                                  {s.company || "Supplier"} • {new Date(s.updated_at).toLocaleString()}
                                 </div>
                               </div>
                               <div className="text-right">
@@ -1040,10 +1044,16 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
 
         {/* Main Content - the single scroll container. Pages fill it with
             h-full + flex so no page has to guess chrome height with 100vh. */}
-        <main className="min-w-0 flex-1 overflow-y-auto overflow-x-clip p-4 sm:p-6">
-          <div key={currentPage} className="page-enter min-w-0 h-full">
-          {children}
-          </div>
+                <main className="min-w-0 flex-1 overflow-y-auto overflow-x-clip p-4 sm:p-6">
+          {showPageSkeleton ? (
+            <div className="page-enter min-w-0 h-full">
+              <AppSkeleton />
+            </div>
+          ) : (
+            <div key={currentPage} className="page-enter min-w-0 h-full">
+              {children}
+            </div>
+          )}
         </main>
         {executiveMode && ["accountant", "boss", "owner"].includes(userRole) && <ScheduledPaymentPrompt onView={() => onPageChange("scheduled-payments")} />}
       </div>

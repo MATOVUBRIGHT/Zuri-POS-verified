@@ -1551,6 +1551,7 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
       onOpenCashManagement={() => setShowCashPopup(true)}
       userRole={isAdmin ? "admin" : hasExecutivePosAccess ? "owner" : userRole}
       allowedPages={staffAllowedPages}
+      dataLoading={dataLoading}
       onReturnToExecutive={posStoreId ? () => navigate("/") : undefined}
       branchName={posStoreId ? branchName : undefined}
     >
