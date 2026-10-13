@@ -43,43 +43,62 @@ const Auth = () => {
 
   useEffect(() => {
     let mounted = true;
+    let redirectStarted = false;
+
+    const redirectAfterSignIn = () => {
+      if (redirectStarted) return;
+      redirectStarted = true;
+      try {
+        const redirect = localStorage.getItem('post_auth_redirect');
+        if (redirect) {
+          localStorage.removeItem('post_auth_redirect');
+          navigate(redirect, { replace: true });
+          return;
+        }
+      } catch (error) {
+        console.warn("Could not read the post-auth redirect:", error);
+      }
+      navigate("/", { replace: true });
+    };
     
     // Set up auth state listener first
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
       if (event === 'SIGNED_IN' && session) {
-        try {
-          const redirect = localStorage.getItem('post_auth_redirect');
-          if (redirect) {
-            localStorage.removeItem('post_auth_redirect');
-            navigate(redirect);
-            return;
-          }
-        } catch {}
-        navigate("/");
+        redirectAfterSignIn();
       }
     });
 
     // Then check for existing session
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (!mounted) return;
-      if (error) {
-        console.error("Auth session check error:", error);
-        if (error.message.includes("refresh_token_not_found") || error.message.includes("Refresh Token Not Found")) {
-          supabase.auth.signOut();
+    void supabase.auth.getSession()
+      .then(({ data: { session }, error }) => {
+        if (!mounted) return;
+        if (error) {
+          console.error("Auth session check error:", error);
+          if (error.message.includes("refresh_token_not_found") || error.message.includes("Refresh Token Not Found")) {
+            void supabase.auth.signOut().catch((signOutError) => {
+              console.error("Could not clear invalid auth session:", signOutError);
+            });
+          }
+          return;
         }
-        return;
-      }
-      if (session) {
-        navigate("/");
-      }
-    });
+        if (session) redirectAfterSignIn();
+      })
+      .catch((error: unknown) => {
+        if (!mounted) return;
+        console.error("Auth session check failed:", error);
+        toast({
+          variant: "destructive",
+          title: "Could not check your session",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      });
 
     return () => {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [navigate]);
+  }, [navigate, toast]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,24 +118,34 @@ const Auth = () => {
     }
     
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: result.data.email,
-      password: result.data.password,
-    });
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: result.data.email,
+        password: result.data.password,
+      });
 
-    if (error) {
+      if (error) {
+        toast({
+          variant: "destructive",
+          title: "Login failed",
+          description: error.message,
+        });
+      } else {
+        toast({
+          title: "Welcome back!",
+          description: "Successfully logged in.",
+        });
+      }
+    } catch (error) {
+      console.error("Login request failed:", error);
       toast({
         variant: "destructive",
         title: "Login failed",
-        description: error.message,
+        description: error instanceof Error ? error.message : "Could not reach the authentication service. Check your connection and try again.",
       });
-    } else {
-      toast({
-        title: "Welcome back!",
-        description: "Successfully logged in.",
-      });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
 
@@ -240,18 +269,20 @@ const Auth = () => {
 
   const handleGoogleLogin = async () => {
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/`,
-      }
-    });
-
-    if (error) {
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/`,
+        }
+      });
+      if (error) throw error;
+    } catch (error) {
+      console.error("Google login request failed:", error);
       toast({
         variant: "destructive",
         title: "Google login failed",
-        description: error.message,
+        description: error instanceof Error ? error.message : "Could not start Google sign-in. Check your connection and try again.",
       });
       setLoading(false);
     }
