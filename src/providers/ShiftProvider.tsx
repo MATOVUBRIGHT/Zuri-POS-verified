@@ -38,7 +38,7 @@ function clearShiftCache() {
 export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const cached = loadShiftCache();
   const [activeShift, setActiveShift] = useState<Shift | null>(cached?.activeShift ?? null);
-  const [loading, setLoading] = useState(!cached); // instant if cached
+  const [loading, setLoading] = useState(false); // Start optimistic - don't block UI
   const [user, setUser] = useState<import('@supabase/supabase-js').User | null>(cached?.user ?? null);
   const [store, setStore] = useState<Store | null>(cached?.store ?? null);
   const [isAdmin, setIsAdmin] = useState(cached?.isAdmin ?? false);
@@ -47,7 +47,9 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const fetchInitialData = useCallback(async () => {
     try {
-      setLoading(true);
+      // Don't block the UI with loading state if we have cached data
+      if (!cached) setLoading(true);
+      
       const { data: { session } } = await supabase.auth.getSession();
       const user = session?.user || null;
       setUser(user);

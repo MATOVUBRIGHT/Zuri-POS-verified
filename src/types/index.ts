@@ -13,6 +13,38 @@ export interface StockTransfer {
   created_at: string;
 }
 
+export type StockTransferRequestStatus = "pending" | "partial" | "completed" | "rejected";
+export type StockTransferItemStatus = "pending" | "approved" | "rejected";
+
+export interface StockTransferRequest {
+  id: string;
+  from_store_id: string;
+  to_store_id: string;
+  created_by: string;
+  reference: string | null;
+  notes: string | null;
+  status: StockTransferRequestStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StockTransferItem {
+  id: string;
+  request_id: string;
+  source_inventory_id: string;
+  product_name: string;
+  category: string;
+  size: string | null;
+  barcode: string | null;
+  quantity: number;
+  cost_per_unit: number;
+  available_quantity_at_request: number;
+  status: StockTransferItemStatus;
+  decided_by: string | null;
+  decided_at: string | null;
+  created_at: string;
+}
+
 export interface Category {
   id: string;
   name: string;
@@ -98,6 +130,7 @@ export interface SaleItem {
   products: Product[];
   created_at?: string;
   staff_id?: string | null;
+  reseller_id?: string | null;
   paymentMethodId?: string | null;
   paymentDetails?: {
     mobileMoneyNumber?: string | null;

@@ -1,35 +1,38 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import Layout from "@/components/Layout";
-import Dashboard from "@/components/Dashboard";
-import StockEntry from "@/components/StockEntry";
-import SalesEntry from "@/components/SalesEntry";
-import InventoryManagement from "@/components/InventoryManagement";
-import BarcodeManager from "@/components/BarcodeManager";
-import Reports from "@/components/Reports";
-import Expenses from "@/components/Expenses";
-import Settings from "@/components/Settings";
-import Stores from "@/components/Stores";
-import Products from "@/components/Products";
-import Customers from "@/components/Customers";
-import Shifts from "@/components/Shifts";
-import OnboardingIntro from "@/components/OnboardingIntro";
-import AuditLogs from "@/components/AuditLogs";
-import Suppliers from "@/components/Suppliers";
-import SupplierReports from "@/components/SupplierReports";
-import ReturnsAndDamaged from "@/components/ReturnsAndDamaged";
-import AdminDashboard from "@/components/AdminDashboard";
-import CashManagement from "@/components/CashManagement";
-import RoleDashboards from "@/components/RoleDashboards";
-import ExecutiveWorkspace from "@/components/ExecutiveWorkspace";
-import ExecutiveLayout from "@/components/ExecutiveLayout";
-import ExecutiveTeamAccess from "@/components/ExecutiveTeamAccess";
-import PaymentAccounts from "@/components/PaymentAccounts";
-import BankCash from "@/components/BankCash";
-import ScheduledPayments from "@/components/ScheduledPayments";
-import ExecutiveExpenses from "@/components/ExecutiveExpenses";
-import Tracker from "@/components/Tracker";
+// Lazy load heavy components for better performance
+const Dashboard = lazy(() => import("@/components/Dashboard"));
+const StockEntry = lazy(() => import("@/components/StockEntry"));
+const SalesEntry = lazy(() => import("@/components/SalesEntry"));
+const InventoryManagement = lazy(() => import("@/components/InventoryManagement"));
+const BarcodeManager = lazy(() => import("@/components/BarcodeManager"));
+const Reports = lazy(() => import("@/components/Reports"));
+const Expenses = lazy(() => import("@/components/Expenses"));
+const Settings = lazy(() => import("@/components/Settings"));
+const Stores = lazy(() => import("@/components/Stores"));
+const Products = lazy(() => import("@/components/Products"));
+const Customers = lazy(() => import("@/components/Customers"));
+const Shifts = lazy(() => import("@/components/Shifts"));
+const OnboardingIntro = lazy(() => import("@/components/OnboardingIntro"));
+const AuditLogs = lazy(() => import("@/components/AuditLogs"));
+const Suppliers = lazy(() => import("@/components/Suppliers"));
+const SupplierReports = lazy(() => import("@/components/SupplierReports"));
+const Resellers = lazy(() => import("@/components/Resellers"));
+const BranchStockTransfers = lazy(() => import("@/components/BranchStockTransfers"));
+const ReturnsAndDamaged = lazy(() => import("@/components/ReturnsAndDamaged"));
+const AdminDashboard = lazy(() => import("@/components/AdminDashboard"));
+const CashManagement = lazy(() => import("@/components/CashManagement"));
+const RoleDashboards = lazy(() => import("@/components/RoleDashboards"));
+const ExecutiveWorkspace = lazy(() => import("@/components/ExecutiveWorkspace"));
+const ExecutiveLayout = lazy(() => import("@/components/ExecutiveLayout"));
+const ExecutiveTeamAccess = lazy(() => import("@/components/ExecutiveTeamAccess"));
+const PaymentAccounts = lazy(() => import("@/components/PaymentAccounts"));
+const BankCash = lazy(() => import("@/components/BankCash"));
+const ScheduledPayments = lazy(() => import("@/components/ScheduledPayments"));
+const ExecutiveExpenses = lazy(() => import("@/components/ExecutiveExpenses"));
+const Tracker = lazy(() => import("@/components/Tracker"));
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { StockItem, SaleItem, ExpenseItem, Product, Category, Staff } from "@/types";
@@ -112,7 +115,7 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
   // An owner/boss deliberately entering /pos/:storeId from Executive keeps the
   // full POS navigation. Page grants are for direct branch-staff logins only.
   const hasExecutivePosAccess = Boolean(posStoreId && (isExecutiveUser || isAdmin));
-  const executivePages = new Set(["boss-dashboard", "accountant-dashboard", "executive-branches", "executive-finance", "executive-expenses", "executive-accounts", "executive-team", "executive-reports", "executive-settings", "scheduled-payments"]);
+  const executivePages = new Set(["boss-dashboard", "accountant-dashboard", "executive-branches", "executive-finance", "executive-expenses", "executive-accounts", "executive-team", "executive-reports", "executive-settings", "scheduled-payments", "resellers"]);
   const executivePage = executivePages.has(currentPage) ? currentPage : resolvedWorkspaceRole === "accountant" ? "accountant-dashboard" : "boss-dashboard";
 
   const handlePageChange = (page: string, params?: unknown) => {
@@ -209,13 +212,12 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [stockData, setStockData] = useState<StockItem[]>([]);
   const [salesData, setSalesData] = useState<SaleItem[]>([]);
   const [expensesData, setExpensesData] = useState<ExpenseItem[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [availableCash, setAvailableCash] = useState(0);
+  const [availableCash, setAvailableCash] = useState<number>(0);
   const [userId, setUserId] = useState<string | null>(null);
-  const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const [isInitialSyncing, setIsInitialSyncing] = useState(false);
 
@@ -260,32 +262,31 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
     return () => { active = false; };
   }, [hasExecutivePosAccess, posStoreId, setActiveStaff, setUserRole, userId]);
 
-  // Use optimized hooks for data fetching
+  // Use optimized hooks for data fetching - with background loading
   const { data: rawInventory, isLoading: invLoading } = useOptimizedInventory(currentStoreId, userId);
   const { data: rawSales, isLoading: salesLoading } = useOptimizedSales(currentStoreId, userId);
   const { data: rawExpenses, isLoading: expensesLoading } = useOptimizedExpenses(currentStoreId, userId);
   const { data: rawCashTransactions } = useOptimizedCashTransactions(currentStoreId, userId);
 
-  // Real-time sync: listen for changes from other devices
+  // Real-time sync: listen for changes from other devices (non-blocking)
   useRealtimeSync(currentStoreId);
-  // Visibility refresh: refetch stale data when returning from minimized state
+  // Visibility refresh: refetch stale data when returning from minimized state (non-blocking)
   useVisibilityRefresh(currentStoreId);
 
-  // Sync hook data to state (to maintain compatibility with existing handlers)
-  useEffect(() => {
-    const dedupedInventory = dedupeRowsById(rawInventory as Array<{ id?: string }> | null | undefined);
-    if (dedupedInventory.length === 0) {
-      setStockData([]);
-      return;
-    }
+  // Progressive data loading - don't block UI while transforming data
+  const stockDataSource = useMemo(() => {
+    if (!rawInventory) return [];
 
-    setStockData(dedupedInventory.map((item: { 
-      id: string; product_name: string; category: string | null; quantity: number; cost_per_unit: number; 
-      total_value: number; date_of_purchase: string; sachets_count?: number; loose_items?: number; 
-      opened_sachets?: number; items_per_sachet?: number; retail_price?: number; wholesale_price?: number; 
-      barcode?: string; barcode_type?: string; barcode_mode?: string; store_id: string; size?: string; 
-      min_stock_level?: number; reorder_quantity?: number; notes?: string; packaging_type?: string; 
-      unit_name?: string; supplier?: string; product_image?: string; created_at: string 
+    const dedupedInventory = dedupeRowsById(rawInventory as Array<{ id?: string }> | null | undefined);
+    if (dedupedInventory.length === 0) return [];
+
+    return dedupedInventory.map((item: {
+      id: string; product_name: string; category: string | null; quantity: number; cost_per_unit: number;
+      total_value: number; date_of_purchase: string; sachets_count?: number; loose_items?: number;
+      opened_sachets?: number; items_per_sachet?: number; retail_price?: number; wholesale_price?: number;
+      barcode?: string; barcode_type?: string; barcode_mode?: string; store_id: string; size?: string;
+      min_stock_level?: number; reorder_quantity?: number; notes?: string; packaging_type?: string;
+      unit_name?: string; supplier?: string; product_image?: string; created_at: string
     }) => ({
       id: item.id,
       productName: item.product_name,
@@ -315,20 +316,20 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
       supplier: item.supplier,
       productImage: item.product_image,
       dateOfEntry: item.created_at
-    })));
+    }));
   }, [rawInventory]);
 
-  useEffect(() => {
-    const dedupedSales = dedupeRowsById(rawSales as Array<{ id?: string }> | null | undefined);
-    if (dedupedSales.length === 0) {
-      setSalesData([]);
-      return;
-    }
+  // Progressive sales data transformation
+  const salesDataSource = useMemo(() => {
+    if (!rawSales) return [];
 
-    setSalesData(dedupedSales.map((sale: { 
-      id: string; customer_name: string | null; date_of_sale: string; total_amount: number; 
-      paid_in_cash?: boolean; products: unknown; staff_id: string | null; 
-      payment_method_id?: string | null; payment_details?: unknown 
+    const dedupedSales = dedupeRowsById(rawSales as Array<{ id?: string }> | null | undefined);
+    if (dedupedSales.length === 0) return [];
+
+    return dedupedSales.map((sale: {
+      id: string; customer_name: string | null; date_of_sale: string; total_amount: number;
+      paid_in_cash?: boolean; products: unknown; staff_id: string | null;
+      payment_method_id?: string | null; payment_details?: unknown
     }) => ({
       id: sale.id,
       customerName: sale.customer_name,
@@ -339,19 +340,19 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
       staff_id: sale.staff_id,
       paymentMethodId: sale.payment_method_id ?? null,
       paymentDetails: sale.payment_details ?? null,
-    })));
+    }));
   }, [rawSales]);
 
-  useEffect(() => {
-    const dedupedExpenses = dedupeRowsById(rawExpenses as Array<{ id?: string }> | null | undefined);
-    if (dedupedExpenses.length === 0) {
-      setExpensesData([]);
-      return;
-    }
+  // Progressive expenses data transformation
+  const expensesDataSource = useMemo(() => {
+    if (!rawExpenses) return [];
 
-    setExpensesData(dedupedExpenses.map((exp: { 
-      id: string; description: string | null; amount: number; category: string | null; 
-      date_of_expense: string; payment_method: string | null 
+    const dedupedExpenses = dedupeRowsById(rawExpenses as Array<{ id?: string }> | null | undefined);
+    if (dedupedExpenses.length === 0) return [];
+
+    return dedupedExpenses.map((exp: {
+      id: string; description: string | null; amount: number; category: string | null;
+      date_of_expense: string; payment_method: string | null
     }) => ({
       id: exp.id,
       description: exp.description,
@@ -359,31 +360,46 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
       category: exp.category,
       date: exp.date_of_expense,
       paymentMethod: exp.payment_method,
-    })));
+    }));
   }, [rawExpenses]);
 
-  // Recalculate available cash from cash_transactions only (avoids double-counting).
-  useEffect(() => {
-    if (!userId || !currentStoreId || !rawCashTransactions) return;
+  // Progressive cash calculation
+  const availableCashSource = useMemo(() => {
+    if (!userId || !currentStoreId || !rawCashTransactions) return 0;
 
     const totalCash = dedupeRowsById(rawCashTransactions as Array<{ id?: string; type?: string; amount?: number }>).reduce((sum, tx) => {
-        const t = String((tx as { type?: string })?.type ?? "").toLowerCase();
-        const amount = Number((tx as { amount?: number })?.amount) || 0;
-        const isIn = t === "in" || t === "deposit" || t === "income";
-        const isOut = t === "out" || t === "withdrawal" || t === "expense";
-        if (isIn) return sum + amount;
-        if (isOut) return sum - amount;
-        return sum; // ignore unknown types
-      }, 0);
+      const t = String((tx as { type?: string })?.type ?? "").toLowerCase();
+      const amount = Number((tx as { amount?: number })?.amount) || 0;
+      const isIn = t === "in" || t === "deposit" || t === "income";
+      const isOut = t === "out" || t === "withdrawal" || t === "expense";
+      if (isIn) return sum + amount;
+      if (isOut) return sum - amount;
+      return sum; // ignore unknown types
+    }, 0);
 
-    setAvailableCash(Math.max(0, totalCash));
+    return Math.max(0, totalCash);
   }, [rawCashTransactions, userId, currentStoreId]);
 
-  // Update loading state based on hooks — only show loading on true first fetch (no cached data)
-  const dataLoadingState = (invLoading && !stockData.length) || (salesLoading && !salesData.length);
   useEffect(() => {
-    setDataLoading(dataLoadingState);
-  }, [dataLoadingState]);
+    setStockData(stockDataSource);
+  }, [stockDataSource]);
+
+  useEffect(() => {
+    setSalesData(salesDataSource);
+  }, [salesDataSource]);
+
+  useEffect(() => {
+    setExpensesData(expensesDataSource);
+  }, [expensesDataSource]);
+
+  useEffect(() => {
+    setAvailableCash(availableCashSource);
+  }, [availableCashSource]);
+
+  // Optimized loading state - only show loading on true first fetch (no cached data)
+  const dataLoading = useMemo(() => {
+    return (invLoading && !stockData.length) || (salesLoading && !salesData.length);
+  }, [invLoading, salesLoading, stockData.length, salesData.length]);
 
   // When the active store changes, keepPreviousData handles the transition —
   // don't set dataLoading=true as it causes unnecessary flicker
@@ -1049,45 +1065,108 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
     if (isExecutiveRoot) {
       switch (executivePage) {
         case "accountant-dashboard":
-          return <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => handlePageChange("executive-reports")} />;
+          return (
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => handlePageChange("executive-reports")} />
+            </Suspense>
+          );
         case "executive-branches":
           return (
-            <ExecutiveWorkspace
-              page="executive-branches"
-              userId={userId}
-              onOpenBranch={openBranchPos}
-              canCreateBranch={resolvedWorkspaceRole !== "accountant"}
-            />
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <ExecutiveWorkspace
+                page="executive-branches"
+                userId={userId}
+                onOpenBranch={openBranchPos}
+                canCreateBranch={resolvedWorkspaceRole !== "accountant"}
+              />
+            </Suspense>
           );
         case "executive-finance":
-          return <ExecutiveWorkspace page="executive-finance" userId={userId} onOpenBranch={openBranchPos} />
+          return (
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <ExecutiveWorkspace page="executive-finance" userId={userId} onOpenBranch={openBranchPos} />
+            </Suspense>
+          );
         case "executive-expenses":
           // An accountant approves spending but does not submit their own. The nav
           // omits this page; guard the route too so a stale `currentPage` or a direct
           // handlePageChange cannot render it.
           if (resolvedWorkspaceRole === "accountant") {
-            return <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => handlePageChange("executive-reports")} />;
+            return (
+              <Suspense fallback={<LoadingSpinner size="lg" />}>
+                <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => handlePageChange("executive-reports")} />
+              </Suspense>
+            );
           }
-          return <ExecutiveExpenses userId={userId} />;
+          return (
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <ExecutiveExpenses userId={userId} />
+            </Suspense>
+          );
         case "executive-accounts":
-          return <PaymentAccounts executive userId={userId} />;
+          return (
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <PaymentAccounts executive userId={userId} />
+            </Suspense>
+          );
         case "executive-team":
-          return <ExecutiveTeamAccess userId={userId} />;
+          return (
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <ExecutiveTeamAccess userId={userId} />
+            </Suspense>
+          );
         case "executive-reports":
           return userRole === "accountant"
-            ? <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => {}} />
-            : <ExecutiveWorkspace page="executive-reports" userId={userId} onOpenBranch={openBranchPos} />;
+            ? (
+              <Suspense fallback={<LoadingSpinner size="lg" />}>
+                <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => {}} />
+              </Suspense>
+            )
+            : (
+              <Suspense fallback={<LoadingSpinner size="lg" />}>
+                <ExecutiveWorkspace page="executive-reports" userId={userId} onOpenBranch={openBranchPos} />
+              </Suspense>
+            );
         case "executive-settings":
-          return <ExecutiveWorkspace page="executive-settings" userId={userId} onOpenBranch={openBranchPos} />;
+          return (
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <ExecutiveWorkspace page="executive-settings" userId={userId} onOpenBranch={openBranchPos} />
+            </Suspense>
+          );
         case "scheduled-payments":
-          return <ScheduledPayments currentStoreId={null} executive />;
+          return (
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <ScheduledPayments currentStoreId={null} executive />
+            </Suspense>
+          );
+        case "resellers":
+          if (resolvedWorkspaceRole !== "owner" && !isAdmin) {
+            return (
+              <Suspense fallback={<LoadingSpinner size="lg" />}>
+                <ExecutiveWorkspace page="boss-dashboard" userId={userId} onOpenBranch={openBranchPos} />
+              </Suspense>
+            );
+          }
+          return (
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <Resellers currentStoreId={currentStoreId} stockData={stockData} />
+            </Suspense>
+          );
         default:
-          return <ExecutiveWorkspace page="boss-dashboard" userId={userId} onOpenBranch={openBranchPos} />;
+          return (
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <ExecutiveWorkspace page="boss-dashboard" userId={userId} onOpenBranch={openBranchPos} />
+            </Suspense>
+          );
       }
     }
 
     if (isAdmin && currentPage === "admin") {
-      return <AdminDashboard />;
+      return (
+        <Suspense fallback={<LoadingSpinner size="lg" />}>
+          <AdminDashboard />
+        </Suspense>
+      );
     }
 
     // Pages open instantly – no loading gate
@@ -1132,89 +1211,189 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
 
     switch (currentPage) {
       case "dashboard":
-        if (userRole === "accountant") return <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => handlePageChange("reports")} />;
+        if (userRole === "accountant") return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => handlePageChange("reports")} />
+          </Suspense>
+        );
         return (
-          <Dashboard
-            stockData={stockData}
-            salesData={salesData}
-            expensesData={expensesData}
-            financialData={financialData}
-            onUpdateCash={handleUpdateCash}
-            onUpdateSale={handleUpdateSale}
-            onDeleteSale={handleDeleteSale}
-            onPageChange={handlePageChange}
-            onOpenCashManagement={() => setShowCashPopup(true)}
-          />
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Dashboard
+              stockData={stockData}
+              salesData={salesData}
+              expensesData={expensesData}
+              financialData={financialData}
+              onUpdateCash={handleUpdateCash}
+              onUpdateSale={handleUpdateSale}
+              onDeleteSale={handleDeleteSale}
+              onPageChange={handlePageChange}
+              onOpenCashManagement={() => setShowCashPopup(true)}
+            />
+          </Suspense>
         );
       case "returns":
-        return <ReturnsAndDamaged
-          stockData={stockData}
-          salesData={salesData}
-          currentStoreId={currentStoreId}
-          onStockUpdate={(updated) => setStockData(stockData.map(s => s.id === updated.id ? updated : s))}
-          onSaleUpdate={(updatedSale) => {
-            setSalesData(prev => prev.map(s => s.id === updatedSale.id ? { ...s, ...updatedSale } : s));
-            void refreshData();
-          }}
-          pageParams={pageParams as any}
-        />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <ReturnsAndDamaged
+              stockData={stockData}
+              salesData={salesData}
+              currentStoreId={currentStoreId}
+              onStockUpdate={(updated) => setStockData(stockData.map(s => s.id === updated.id ? updated : s))}
+              onSaleUpdate={(updatedSale) => {
+                setSalesData(prev => prev.map(s => s.id === updatedSale.id ? { ...s, ...updatedSale } : s));
+                void refreshData();
+              }}
+              pageParams={pageParams as any}
+            />
+          </Suspense>
+        );
       case "stores":
-        return <Stores currentStoreId={currentStoreId} onStoreChange={setCurrentStoreId} branchRestricted={Boolean(posStoreId && activeStaff && !hasExecutivePosAccess)} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Stores currentStoreId={currentStoreId} onStoreChange={setCurrentStoreId} branchRestricted={Boolean(posStoreId && activeStaff && !hasExecutivePosAccess)} />
+          </Suspense>
+        );
       case "accountant-dashboard":
-        return <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => handlePageChange("reports")} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => handlePageChange("reports")} />
+          </Suspense>
+        );
       case "products":
-        return <Products stockData={stockData} onUpdateStock={(updated) => setStockData((current) => current.map(s => s.id === updated.id ? updated : s))} onDeleteStock={(id) => setStockData((current) => current.filter((item) => item.id !== id))} currentStoreId={currentStoreId} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Products stockData={stockData} onUpdateStock={(updated) => setStockData((current) => current.map(s => s.id === updated.id ? updated : s))} onDeleteStock={(id) => setStockData((current) => current.filter((item) => item.id !== id))} currentStoreId={currentStoreId} />
+          </Suspense>
+        );
       case "suppliers":
-        return <Suppliers currentStoreId={currentStoreId} onOpenReports={() => handlePageChange("supplier-reports")} onOpenScheduledPayments={() => handlePageChange("scheduled-payments")} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Suppliers currentStoreId={currentStoreId} onOpenReports={() => handlePageChange("supplier-reports")} onOpenScheduledPayments={() => handlePageChange("scheduled-payments")} />
+          </Suspense>
+        );
       case "supplier-reports":
-        return <SupplierReports currentStoreId={currentStoreId} onBack={() => handlePageChange("suppliers")} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <SupplierReports currentStoreId={currentStoreId} onBack={() => handlePageChange("suppliers")} />
+          </Suspense>
+        );
+      case "resellers":
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Resellers currentStoreId={currentStoreId} stockData={stockData} />
+          </Suspense>
+        );
+      case "stock-transfers":
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <BranchStockTransfers currentStoreId={currentStoreId} />
+          </Suspense>
+        );
       case "stock-entry":
-        return <StockEntry pageParams={pageParams} availableCash={availableCash} currentStoreId={currentStoreId} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <StockEntry pageParams={pageParams} availableCash={availableCash} currentStoreId={currentStoreId} />
+          </Suspense>
+        );
       case "sales-entry":
-        return <SalesEntry stockData={stockData} onAddSale={handleAddSale} currentStoreId={currentStoreId} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <SalesEntry stockData={stockData} onAddSale={handleAddSale} currentStoreId={currentStoreId} />
+          </Suspense>
+        );
       case "inventory":
-        return <InventoryManagement
-          stockData={stockData}
-          setStockData={setStockData}
-          categories={categories}
-          currentPage={currentPage}
-          isLoading={invLoading}
-        />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <InventoryManagement
+              stockData={stockData}
+              setStockData={setStockData}
+              categories={categories}
+              currentPage={currentPage}
+              isLoading={invLoading}
+            />
+          </Suspense>
+        );
       case "scheduled-payments":
-        return <ScheduledPayments currentStoreId={currentStoreId} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <ScheduledPayments currentStoreId={currentStoreId} />
+          </Suspense>
+        );
       case "tracker":
-        return <Tracker />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Tracker />
+          </Suspense>
+        );
       case "barcode-manager":
-        return <BarcodeManager stockData={stockData} currentStoreId={currentStoreId} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <BarcodeManager stockData={stockData} currentStoreId={currentStoreId} />
+          </Suspense>
+        );
       case "reports":
-        return <Reports stockData={stockData} salesData={salesData} expensesData={expensesData} currentStoreId={currentStoreId || undefined} onPageChange={handlePageChange} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Reports stockData={stockData} salesData={salesData} expensesData={expensesData} currentStoreId={currentStoreId || undefined} onPageChange={handlePageChange} />
+          </Suspense>
+        );
       case "expenses":
-        return <Expenses expensesData={expensesData} onAddExpense={handleAddExpense} onDeleteExpense={handleDeleteExpense} currentStoreId={currentStoreId} isLoading={expensesLoading} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Expenses expensesData={expensesData} onAddExpense={handleAddExpense} onDeleteExpense={handleDeleteExpense} currentStoreId={currentStoreId} isLoading={expensesLoading} />
+          </Suspense>
+        );
       case "accounts":
-        return <PaymentAccounts currentStoreId={currentStoreId} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <PaymentAccounts currentStoreId={currentStoreId} />
+          </Suspense>
+        );
       case "banking":
-        return <BankCash currentStoreId={currentStoreId} availableCash={availableCash} onCashDelta={handleUpdateCash} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <BankCash currentStoreId={currentStoreId} availableCash={availableCash} onCashDelta={handleUpdateCash} />
+          </Suspense>
+        );
       case "customers":
-        return <Customers currentStoreId={currentStoreId} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Customers currentStoreId={currentStoreId} />
+          </Suspense>
+        );
       case "shifts":
-        return <Shifts onUpdateCash={handleUpdateCash} onRefresh={refreshData} onStaffLogin={handleStaffLogin} onStaffLogout={handleStaffLogout} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Shifts onUpdateCash={handleUpdateCash} onRefresh={refreshData} onStaffLogin={handleStaffLogin} onStaffLogout={handleStaffLogout} />
+          </Suspense>
+        );
       case "security":
-        return <AuditLogs />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <AuditLogs />
+          </Suspense>
+        );
       case "settings":
-        return <Settings stockData={stockData} salesData={salesData} expensesData={expensesData} currentStoreId={currentStoreId} onDataImport={handleDataImport} branchRestricted={Boolean(posStoreId && !hasExecutivePosAccess)} />;
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Settings stockData={stockData} salesData={salesData} expensesData={expensesData} currentStoreId={currentStoreId} onDataImport={handleDataImport} branchRestricted={Boolean(posStoreId && !hasExecutivePosAccess)} />
+          </Suspense>
+        );
       default:
         return (
-          <Dashboard
-            stockData={stockData}
-            salesData={salesData}
-            expensesData={expensesData}
-            financialData={financialData}
-            onUpdateCash={handleUpdateCash}
-            onUpdateSale={handleUpdateSale}
-            onDeleteSale={handleDeleteSale}
-            onPageChange={handlePageChange}
-            onOpenCashManagement={() => setShowCashPopup(true)}
-          />
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <Dashboard
+              stockData={stockData}
+              salesData={salesData}
+              expensesData={expensesData}
+              financialData={financialData}
+              onUpdateCash={handleUpdateCash}
+              onUpdateSale={handleUpdateSale}
+              onDeleteSale={handleDeleteSale}
+              onPageChange={handlePageChange}
+              onOpenCashManagement={() => setShowCashPopup(true)}
+            />
+          </Suspense>
         );
     }
   };

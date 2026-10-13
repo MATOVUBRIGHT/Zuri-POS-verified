@@ -39,6 +39,8 @@ import {
   Landmark,
   Wallet,
   Banknote,
+  Handshake,
+  ArrowLeftRight,
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
 import StoreChat from "@/components/StoreChat";
@@ -422,7 +424,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
     }));
   }, [productIndex, searchQuery]);
 
-  const navigationIcons = { dashboard: LayoutDashboard, products: Boxes, suppliers: Truck, "stock-entry": Package, "sales-entry": ShoppingCart, inventory: Warehouse, "barcode-manager": Barcode, customers: Users, expenses: Receipt, accounts: Landmark, banking: Banknote, returns: Undo2, shifts: Clock, reports: FileText, stores: Store, security: Shield, settings: SettingsIcon, "scheduled-payments": Receipt, admin: Shield };
+  const navigationIcons = { dashboard: LayoutDashboard, products: Boxes, suppliers: Truck, "stock-entry": Package, "sales-entry": ShoppingCart, inventory: Warehouse, "stock-transfers": ArrowLeftRight, "barcode-manager": Barcode, customers: Users, expenses: Receipt, accounts: Landmark, banking: Banknote, returns: Undo2, shifts: Clock, reports: FileText, resellers: Handshake, stores: Store, security: Shield, settings: SettingsIcon, "scheduled-payments": Receipt, admin: Shield };
   const navigationItems = [
     // Executive-only entry points are intentionally not available to branch staff.
 
@@ -438,6 +440,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
     { id: "executive-accounts", label: "Accounts", icon: Landmark },
     { id: "executive-team", label: "Team & Access", icon: Users },
     { id: "executive-reports", label: "Reports", icon: FileText },
+    { id: "resellers", label: "Resellers", icon: Handshake },
     { id: "scheduled-payments", label: "Scheduled Payments", icon: Receipt },
     // Settings is deliberately last: it is configuration, not a daily workflow.
     { id: "executive-settings", label: "Settings", icon: SettingsIcon },
@@ -453,7 +456,11 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
     { id: "executive-settings", label: "Settings", icon: SettingsIcon },
   ];
 
-  const filteredNavItems = userRole === "accountant" && executiveMode ? accountantNavigationItems : executiveMode ? executiveNavigationItems : navigationItems.filter(item => {
+  const filteredNavItems = userRole === "accountant" && executiveMode
+    ? accountantNavigationItems
+    : executiveMode
+      ? executiveNavigationItems.filter((item) => item.id !== "resellers" || ["owner", "admin"].includes(userRole))
+      : navigationItems.filter(item => {
     // Every direct branch session gets a read-only Store entry. It is not a
     // management or switching surface; the Stores component enforces that view.
     if (item.id === 'stores' && resolvedStoreId) return true;
@@ -462,7 +469,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
 
     // Direct branch staff never receive business/store management, even if a
     // stale local role says admin. This is also enforced by the page guard.
-    if (!item.branchAssignable && !["owner", "boss"].includes(userRole)) return false;
+    if (!item.branchAssignable && !["owner", "boss", "admin"].includes(userRole)) return false;
     // Assigned branch logins are scoped by the executive-selected page list.
     // This takes precedence over broad role defaults, while owner/boss/admin
     // retain their full operational navigation.
@@ -476,7 +483,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
     // If staff has specific allowed_pages, further restrict to those pages
     // Owner and admin bypass this check
     return true;
-  });
+      });
 
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString('en-US', {

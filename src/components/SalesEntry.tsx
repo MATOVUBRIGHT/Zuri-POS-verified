@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, memo, lazy, Suspense, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,6 +36,7 @@ import { getCurrencySymbol } from "@/lib/currency";
 import { usePosStore } from "@/store/usePosStore";
 import WalkInTracker from "@/components/WalkInTracker";
 import { generateReceiptHTML } from "@/lib/receiptTemplate";
+import { useRenderTracker, useOptimizedDebounce, usePerformanceProfiler, useOptimizedCallback } from "@/lib/performanceMonitor";
 
 const saleSchema = z.object({
   customerName: z.string().min(1, "Customer name is required"),
@@ -53,16 +54,66 @@ interface SalesEntryProps {
 
 const receiptLabel = (sale: SaleItem) => sale.receiptNumber || `LEGACY-${sale.id.slice(-8).toUpperCase()}`;
 
-const ReprintSalesTable = ({ sales, currency, getPaymentLabel, onPrint, onReturn }: { sales: SaleItem[]; currency: string; getPaymentLabel: (sale: SaleItem) => string; onPrint: (sale: SaleItem) => void; onReturn: (sale: SaleItem) => void }) => (
-  <div className="overflow-x-auto rounded-xl border bg-card">
-    <table className="w-full min-w-[760px] text-sm">
-      <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3">Receipt</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Items sold</th><th className="px-4 py-3">Method</th><th className="px-4 py-3 text-right">Total</th><th className="px-4 py-3 text-right">Actions</th></tr></thead>
-      <tbody>{sales.map(sale => <tr key={sale.id} className="border-t hover:bg-muted/30"><td className="px-4 py-3 font-mono font-semibold text-primary">#{receiptLabel(sale)}</td><td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{new Date(sale.created_at || sale.dateOfSale).toLocaleString()}</td><td className="px-4 py-3 font-medium">{sale.customerName || "Walk-in"}</td><td className="max-w-[220px] px-4 py-3"><div className="flex flex-wrap gap-1">{sale.products.map((product, index) => <Badge key={`${sale.id}-${index}`} variant="outline" className="max-w-[190px] truncate text-xs">{product.quantity}× {product.productName}</Badge>)}</div></td><td className="px-4 py-3"><Badge variant={sale.paidInCash ? "default" : "secondary"}>{getPaymentLabel(sale)}</Badge></td><td className="px-4 py-3 text-right font-bold">{currency} {sale.totalAmount.toLocaleString()}</td><td className="px-4 py-3"><div className="flex justify-end gap-1"><Button type="button" variant="ghost" size="sm" title="Print receipt" onClick={() => onPrint(sale)}><Printer className="h-4 w-4" /></Button><Button type="button" variant="ghost" size="sm" title="Return items" onClick={() => onReturn(sale)}><Undo2 className="h-4 w-4" /></Button></div></td></tr>)}</tbody>
-    </table>
-  </div>
-);
+const ReprintSalesTable = memo(({ sales, currency, getPaymentLabel, onPrint, onReturn }: { sales: SaleItem[]; currency: string; getPaymentLabel: (sale: SaleItem) => string; onPrint: (sale: SaleItem) => void; onReturn: (sale: SaleItem) => void }) => {
+  useRenderTracker('ReprintSalesTable');
+  
+  return (
+    <div className="overflow-x-auto rounded-xl border bg-card">
+      <table className="w-full min-w-[760px] text-sm">
+        <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+          <tr>
+            <th className="px-4 py-3">Receipt</th>
+            <th className="px-4 py-3">Date</th>
+            <th className="px-4 py-3">Customer</th>
+            <th className="px-4 py-3">Items sold</th>
+            <th className="px-4 py-3">Method</th>
+            <th className="px-4 py-3 text-right">Total</th>
+            <th className="px-4 py-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sales.map(sale => (
+            <tr key={sale.id} className="border-t hover:bg-muted/30">
+              <td className="px-4 py-3 font-mono font-semibold text-primary">#{receiptLabel(sale)}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{new Date(sale.created_at || sale.dateOfSale).toLocaleString()}</td>
+              <td className="px-4 py-3 font-medium">{sale.customerName || "Walk-in"}</td>
+              <td className="max-w-[220px] px-4 py-3">
+                <div className="flex flex-wrap gap-1">
+                  {sale.products.map((product, index) => (
+                    <Badge key={`${sale.id}-${index}`} variant="outline" className="max-w-[190px] truncate text-xs">
+                      {product.quantity}× {product.productName}
+                    </Badge>
+                  ))}
+                </div>
+              </td>
+              <td className="px-4 py-3">
+                <Badge variant={sale.paidInCash ? "default" : "secondary"}>{getPaymentLabel(sale)}</Badge>
+              </td>
+              <td className="px-4 py-3 text-right font-bold">{currency} {sale.totalAmount.toLocaleString()}</td>
+              <td className="px-4 py-3">
+                <div className="flex justify-end gap-1">
+                  <Button type="button" variant="ghost" size="sm" title="Print receipt" onClick={() => onPrint(sale)}>
+                    <Printer className="h-4 w-4" />
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" title="Return items" onClick={() => onReturn(sale)}>
+                    <Undo2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+});
+
+ReprintSalesTable.displayName = 'ReprintSalesTable';
 
 const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) => {
+  useRenderTracker('SalesEntry');
+  const { profile } = usePerformanceProfiler();
+  
   const addSaleMutation = useAddSaleOptimistic();
   const queryClient = useQueryClient();
   const cur = getCurrencySymbol();
@@ -75,7 +126,7 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
   });
   const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
-  const debouncedSearchTerm = useDebounce(searchTerm, 300);
+  const debouncedSearchTerm = useOptimizedDebounce(searchTerm, 200);
   const [amountReceived, setAmountReceived] = useState("");
   const [saleType, setSaleType] = useState<"retail" | "wholesale">("retail");
   const [formData, setFormData] = useState({
@@ -394,13 +445,31 @@ setSelectedPaymentAccountId(prev =>
     }
   };
 
-  // Memoized filtered stock for instant search
-  const filteredStock = useMemo(() =>
-    stockData.filter(item =>
-      (item.productName.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-       (item.barcode && item.barcode.toLowerCase().includes(debouncedSearchTerm.toLowerCase())))
-    ).slice(0, 10),
-    [stockData, debouncedSearchTerm]);
+  // Optimized search with debouncing and memoization for better performance
+  const filteredStock = useMemo(() => {
+    if (!debouncedSearchTerm.trim()) return [];
+    
+    const term = debouncedSearchTerm.toLowerCase();
+    return stockData
+      .filter(item => {
+        return (
+          item.productName.toLowerCase().includes(term) ||
+          (item.barcode && item.barcode.toLowerCase().includes(term)) ||
+          (item.category && item.category.toLowerCase().includes(term)) ||
+          (item.supplier && item.supplier.toLowerCase().includes(term))
+        );
+      })
+      .sort((a, b) => {
+        // Prioritize exact matches and then by product name
+        const aName = a.productName.toLowerCase();
+        const bName = b.productName.toLowerCase();
+        const aExact = aName.startsWith(term) ? 1 : 0;
+        const bExact = bName.startsWith(term) ? 1 : 0;
+        if (aExact !== bExact) return bExact - aExact;
+        return aName.localeCompare(bName);
+      })
+      .slice(0, 10); // Limit results for performance
+  }, [stockData, debouncedSearchTerm]);
 
   const reprintSales = useMemo(() => {
     const query = reprintSearch.trim().toLowerCase();
@@ -440,7 +509,7 @@ setSelectedPaymentAccountId(prev =>
     }
   }, [selectedIndex]);
 
-  const addProduct = (stockItem: StockItem) => {
+  const addProduct = useCallback(profile((stockItem: StockItem) => {
     const isWholesale = saleType === 'wholesale';
     const sellType = isWholesale ? 'sachet' : 'item';
     const existingIndex = products.findIndex(p => String(p.id) === String(stockItem.id) && p.sellType === sellType);
@@ -507,7 +576,7 @@ const totalQuantity = Math.max(0, (stockItem.quantity || 0) - (stockItem.damaged
 
     setSearchTerm('');
     setSelectedIndex(0);
-  };
+  }, 'addProduct'), [products, saleType, toast, profile]);
   const updateProductQuantity = (productName: string, quantity: number, sellType: 'item' | 'sachet') => {
     const stockItem = stockData.find(s => s.productName === productName);
     const itemsPerSachet = stockItem?.items_per_sachet || 1;
@@ -984,7 +1053,7 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
     printWindow.focus();
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = useOptimizedCallback(async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (isSubmitting || submitLockRef.current) return;
@@ -1376,7 +1445,7 @@ const requiresPaymentDetails = isPaidSale && hasMethodRow && !isCashMethod;
       setIsSubmitting(false);
       submitLockRef.current = false;
     }
-  };
+  }, []); // Add dependency array for useOptimizedCallback
 
   const formatDateTime = (dateStr: string) => {
     return new Date(dateStr).toLocaleString('en-US', {

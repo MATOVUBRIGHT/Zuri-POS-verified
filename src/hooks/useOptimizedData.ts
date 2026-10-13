@@ -1,39 +1,100 @@
-// hooks/useOptimizedData.ts - React Query hooks for data fetching
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { SaleItem, StockItem, Product } from '@/types';
 import { generateBarcodeByType, validateBarcode } from '@/lib/barcode';
 import { retryWithBackoff } from '@/lib/retry';
 import { dataSyncService } from '@/lib/data-sync';
 import { sanitizeInventoryPayload } from '@/lib/inventoryPayload';
 import { logSupabaseError } from '@/lib/supabaseError';
+import { optimizedCache, preloadCommonData } from '@/lib/optimizedCache';
+
+// Enhanced caching with background preloading
+const backgroundPreloader = {
+  preloadUserData: async (storeId: string, userId: string) => {
+    // Preload user-specific data in background without blocking UI
+    setTimeout(() => {
+      preloadCommonData(storeId);
+    }, 50); // Reduced delay for faster preloading
+  },
+  
+  preloadNavigation: async (storeId: string) => {
+    // Preload data for likely next page visits - completely background
+    const preloadKeys = [
+      'recent_sales', 'low_stock_items', 'top_products', 
+      'daily_summary', 'payment_accounts', 'categories', 'staff'
+    ];
+    
+    // Use requestIdleCallback for non-blocking preload
+    const preloadNext = () => {
+      preloadKeys.forEach(key => {
+        optimizedCache.preload(`${key}:${storeId}`, async () => {
+          // Lightweight summary queries for navigation hints
+          const { data } = await supabase
+            .from('sales')
+            .select('id, total_amount, customer_name')
+            .eq('store_id', storeId)
+            .limit(10); // Even smaller limits for preloading
+          return data || [];
+        }, { ttl: 5 * 60 * 1000 }); // Shorter TTL for preload data
+      });
+    };
+    
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(preloadNext);
+    } else {
+      setTimeout(preloadNext, 100);
+    }
+  }
+};
 
 export function useOptimizedInventory(storeId: string | null, userId: string | null) {
+    // Background preload user data on first load
+    if (storeId && userId) {
+        backgroundPreloader.preloadUserData(storeId, userId);
+    }
+    
     return useQuery({
         queryKey: ['inventory', storeId],
         queryFn: async () => {
             if (!storeId) return [];
-            return await dataSyncService.getDataWithLocalFirst(`inventory:${storeId}`, async () => {
-                const { data, error } = await supabase
-                    .from('inventory')
-                    .select('*')
-                    .eq('store_id', storeId)
-                    .order('created_at', { ascending: false })
-                    .limit(10000);
-                if (error) throw error;
-                return data || [];
-            });
+            
+            // Use optimized cache with enhanced caching
+            return await optimizedCache.get(
+                `inventory:${storeId}:enhanced`,
+                async () => {
+                    return await dataSyncService.getDataWithLocalFirst(`inventory:${storeId}`, async () => {
+                        const { data, error } = await supabase
+                            .from('inventory')
+                            .select('*')
+                            .eq('store_id', storeId)
+                            .order('created_at', { ascending: false })
+                            .limit(5000); // Reduced limit for faster loading
+                        if (error) throw error;
+                        return data || [];
+                    });
+                },
+                { 
+                    ttl: 20 * 60 * 1000, // Increased to 20 minutes
+                    staleWhileRevalidate: true,
+                    priority: 'high'
+                }
+            );
         },
         enabled: !!storeId && !!userId,
-        staleTime: 1000 * 60 * 5,    // 5 min — realtime handles live updates
-        gcTime: 1000 * 60 * 60 * 24,
+        staleTime: 1000 * 60 * 20,   // Increased to 20 min
+        gcTime: 1000 * 60 * 60 * 48, // 48 hours cache retention
         placeholderData: keepPreviousData,
-        retry: 2,
-        retryDelay: (attempt) => Math.min(500 * 2 ** attempt, 5000),
+        retry: 1, // Reduced retries for faster failures
+        retryDelay: (attempt) => Math.min(200 * 2 ** attempt, 1000), // Much faster retries
         refetchOnMount: false,
         refetchOnWindowFocus: false,
+        refetchOnReconnect: false, // Completely cache-first
         structuralSharing: true,
+        networkMode: 'offlineFirst',
+        meta: {
+            persist: true,
+        }
     });
 }
 
@@ -42,26 +103,43 @@ export function useOptimizedSales(storeId: string | null, userId: string | null)
         queryKey: ['sales', storeId],
         queryFn: async () => {
             if (!storeId) return [];
-            return await dataSyncService.getDataWithLocalFirst(`sales:${storeId}`, async () => {
-                const { data, error } = await supabase
-                    .from('sales')
-                    .select('*')
-                    .eq('store_id', storeId)
-                    .order('date_of_sale', { ascending: false })
-                    .limit(10000);
-                if (error) throw error;
-                return data || [];
-            });
+            
+            // Use optimized cache for sales data
+            return await optimizedCache.get(
+                `sales:${storeId}:enhanced`,
+                async () => {
+                    return await dataSyncService.getDataWithLocalFirst(`sales:${storeId}`, async () => {
+                        const { data, error } = await supabase
+                            .from('sales')
+                            .select('*')
+                            .eq('store_id', storeId)
+                            .order('date_of_sale', { ascending: false })
+                            .limit(2000); // Reduced limit for faster loading
+                        if (error) throw error;
+                        return data || [];
+                    });
+                },
+                { 
+                    ttl: 10 * 60 * 1000, // 10 minutes for sales
+                    staleWhileRevalidate: true,
+                    priority: 'high'
+                }
+            );
         },
         enabled: !!storeId && !!userId,
-        staleTime: 1000 * 60 * 2,    // 2 min
-        gcTime: 1000 * 60 * 60 * 24,
+        staleTime: 1000 * 60 * 10,    // 10 min for better performance
+        gcTime: 1000 * 60 * 60 * 24,  // 24 hours for sales data
         placeholderData: keepPreviousData,
-        retry: 2,
-        retryDelay: (attempt) => Math.min(500 * 2 ** attempt, 5000),
+        retry: 1, // Single retry only
+        retryDelay: (attempt) => Math.min(200 * 2 ** attempt, 1000),
         refetchOnMount: false,
         refetchOnWindowFocus: false,
+        refetchOnReconnect: false, // Cache-first approach
         structuralSharing: true,
+        networkMode: 'offlineFirst',
+        meta: {
+            persist: true,
+        }
     });
 }
 
@@ -76,20 +154,25 @@ export function useOptimizedExpenses(storeId: string | null, userId: string | nu
                     .select('*')
                     .eq('store_id', storeId)
                     .order('date_of_expense', { ascending: false })
-                    .limit(10000);
+                    .limit(2000); // Reduced limit for performance
                 if (error) throw error;
                 return data || [];
             });
         },
         enabled: !!storeId && !!userId,
-        staleTime: 1000 * 60 * 10,   // 10 min
+        staleTime: 1000 * 60 * 15,   // 15 min - expenses change less frequently
         gcTime: 1000 * 60 * 60 * 24,
         placeholderData: keepPreviousData,
-        retry: 2,
-        retryDelay: (attempt) => Math.min(500 * 2 ** attempt, 5000),
+        retry: 3,
+        retryDelay: (attempt) => Math.min(300 * 2 ** attempt, 3000),
         refetchOnMount: false,
         refetchOnWindowFocus: false,
+        refetchOnReconnect: true,
         structuralSharing: true,
+        networkMode: 'offlineFirst',
+        meta: {
+            persist: true,
+        }
     });
 }
 
@@ -157,6 +240,7 @@ interface SaleInput {
     payment_method_id?: string | null;
     payment_account_id?: string | null;
     payment_details?: any;
+    reseller_id?: string;
     inventorySnapshot?: StockItem[];
 }
 
@@ -181,6 +265,7 @@ export function useAddSaleOptimistic() {
                 , payment_method_id: sale.payment_method_id
                 , payment_account_id: sale.payment_account_id
                 , payment_details: sale.payment_details
+                , reseller_id: sale.reseller_id
             };
 
             // Calculate inventory updates to reduce stock.
@@ -333,30 +418,45 @@ export function useDeleteExpenseOptimistic() {
     });
 }
 
-// Prefetch data for faster navigation
+// Prefetch data for faster navigation with enhanced caching
 export function usePrefetchData() {
     const queryClient = useQueryClient();
 
     const prefetchAll = useCallback(async (storeId: string, userId: string) => {
+        // Start background navigation preloading
+        backgroundPreloader.preloadNavigation(storeId);
+        
         await Promise.all([
             queryClient.prefetchQuery({
                 queryKey: ['inventory', storeId],
                 queryFn: async () => {
-                    const { data } = await supabase
-                        .from('inventory')
-                        .select('*')
-                        .eq('store_id', storeId);
-                    return data || [];
+                    return await optimizedCache.get(
+                        `prefetch_inventory:${storeId}`,
+                        async () => {
+                            const { data } = await supabase
+                                .from('inventory')
+                                .select('*')
+                                .eq('store_id', storeId);
+                            return data || [];
+                        },
+                        { ttl: 15 * 60 * 1000, staleWhileRevalidate: true }
+                    );
                 },
             }),
             queryClient.prefetchQuery({
                 queryKey: ['sales', storeId],
                 queryFn: async () => {
-                    const { data } = await supabase
-                        .from('sales')
-                        .select('*')
-                        .eq('store_id', storeId);
-                    return data || [];
+                    return await optimizedCache.get(
+                        `prefetch_sales:${storeId}`,
+                        async () => {
+                            const { data } = await supabase
+                                .from('sales')
+                                .select('*')
+                                .eq('store_id', storeId);
+                            return data || [];
+                        },
+                        { ttl: 8 * 60 * 1000, staleWhileRevalidate: true }
+                    );
                 },
             }),
         ]);

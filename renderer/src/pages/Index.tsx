@@ -18,7 +18,7 @@ import AuditLogs from "@/components/AuditLogs";
 import Suppliers from "@/components/Suppliers";
 import CashManagement from "@/components/CashManagement";
 import AdminDashboard from "@/components/AdminDashboard";
-import RecentCashSalesReport from "@/components/RecentCashSalesReport";
+import Resellers from "../../../src/components/Resellers";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { StockItem, SaleItem, ExpenseItem, Product, Category, Staff } from "@/types";
@@ -988,8 +988,8 @@ const Index = () => {
         return <BarcodeManager stockData={effectiveStockData} currentStoreId={currentStoreId || undefined} />;
       case "reports":
         return <Suspense fallback={<div className="p-4 flex items-center justify-center"><LoadingSpinner size="lg" /></div>}><Reports stockData={effectiveStockData} salesData={effectiveSalesData} expensesData={effectiveExpensesData} currentStoreId={currentStoreId || undefined} /></Suspense>;
-      case "cash-sales-report":
-        return <RecentCashSalesReport currentStoreId={currentStoreId || undefined} />;
+      case "resellers":
+        return <Resellers currentStoreId={currentStoreId} stockData={effectiveStockData} />;
       case "expenses":
         return <Expenses expensesData={effectiveExpensesData} onAddExpense={handleAddExpense} onDeleteExpense={handleDeleteExpense} />;
       case "customers":

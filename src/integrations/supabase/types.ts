@@ -438,6 +438,9 @@ export type Database = {
           category: string
           cost_per_unit: number
           created_at: string
+          damaged_at: string | null
+          damaged_quantity: number
+          damaged_reason: string | null
           date_of_purchase: string
           id: string
           items_per_sachet: number | null
@@ -469,6 +472,9 @@ export type Database = {
           category: string
           cost_per_unit: number
           created_at?: string
+          damaged_at?: string | null
+          damaged_quantity?: number
+          damaged_reason?: string | null
           date_of_purchase: string
           id?: string
           items_per_sachet?: number | null
@@ -500,6 +506,9 @@ export type Database = {
           category?: string
           cost_per_unit?: number
           created_at?: string
+          damaged_at?: string | null
+          damaged_quantity?: number
+          damaged_reason?: string | null
           date_of_purchase?: string
           id?: string
           items_per_sachet?: number | null
@@ -775,6 +784,7 @@ export type Database = {
           id: string
           paid_in_cash: boolean | null
           products: Json
+          reseller_id: string | null
           staff_id: string | null
           store_id: string
           total_amount: number
@@ -789,6 +799,7 @@ export type Database = {
           id?: string
           paid_in_cash?: boolean | null
           products: Json
+          reseller_id?: string | null
           staff_id?: string | null
           store_id: string
           total_amount: number
@@ -802,6 +813,7 @@ export type Database = {
           id?: string
           paid_in_cash?: boolean | null
           products?: Json
+          reseller_id?: string | null
           staff_id?: string | null
           store_id?: string
           total_amount?: number
@@ -827,6 +839,13 @@ export type Database = {
             columns: ["store_id"]
             isOneToOne: false
             referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_reseller_id_fkey"
+            columns: ["reseller_id"]
+            isOneToOne: false
+            referencedRelation: "resellers"
             referencedColumns: ["id"]
           },
         ]
@@ -1102,6 +1121,93 @@ export type Database = {
           },
         ]
       }
+      stock_transfer_requests: {
+        Row: {
+          created_at: string
+          created_by: string
+          from_store_id: string
+          id: string
+          notes: string | null
+          reference: string | null
+          status: string
+          to_store_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          from_store_id: string
+          id?: string
+          notes?: string | null
+          reference?: string | null
+          status?: string
+          to_store_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          from_store_id?: string
+          id?: string
+          notes?: string | null
+          reference?: string | null
+          status?: string
+          to_store_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      stock_transfer_items: {
+        Row: {
+          available_quantity_at_request: number
+          barcode: string | null
+          category: string
+          cost_per_unit: number
+          created_at: string
+          decided_at: string | null
+          decided_by: string | null
+          id: string
+          product_name: string
+          quantity: number
+          request_id: string
+          size: string | null
+          source_inventory_id: string
+          status: string
+        }
+        Insert: {
+          available_quantity_at_request: number
+          barcode?: string | null
+          category: string
+          cost_per_unit: number
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          product_name: string
+          quantity: number
+          request_id: string
+          size?: string | null
+          source_inventory_id: string
+          status?: string
+        }
+        Update: {
+          available_quantity_at_request?: number
+          barcode?: string | null
+          category?: string
+          cost_per_unit?: number
+          created_at?: string
+          decided_at?: string | null
+          decided_by?: string | null
+          id?: string
+          product_name?: string
+          quantity?: number
+          request_id?: string
+          size?: string | null
+          source_inventory_id?: string
+          status?: string
+        }
+        Relationships: []
+      }
       store_access: {
         Row: {
           created_at: string
@@ -1255,6 +1361,167 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "suppliers_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      resellers: {
+        Row: {
+          business_name: string | null
+          created_at: string
+          created_by: string
+          email: string | null
+          id: string
+          is_application: boolean
+          name: string
+          notes: string | null
+          phone: string | null
+          status: string
+          store_id: string
+          updated_at: string
+        }
+        Insert: {
+          business_name?: string | null
+          created_at?: string
+          created_by: string
+          email?: string | null
+          id?: string
+          is_application?: boolean
+          name: string
+          notes?: string | null
+          phone?: string | null
+          status?: string
+          store_id: string
+          updated_at?: string
+        }
+        Update: {
+          business_name?: string | null
+          created_at?: string
+          created_by?: string
+          email?: string | null
+          id?: string
+          is_application?: boolean
+          name?: string
+          notes?: string | null
+          phone?: string | null
+          status?: string
+          store_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "resellers_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reseller_payments: {
+        Row: {
+          amount: number
+          created_at: string
+          id: string
+          notes: string | null
+          paid_at: string
+          payment_method: string
+          recorded_by: string
+          reseller_id: string
+          store_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          id?: string
+          notes?: string | null
+          paid_at?: string
+          payment_method?: string
+          recorded_by: string
+          reseller_id: string
+          store_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          id?: string
+          notes?: string | null
+          paid_at?: string
+          payment_method?: string
+          recorded_by?: string
+          reseller_id?: string
+          store_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reseller_payments_reseller_id_fkey"
+            columns: ["reseller_id"]
+            isOneToOne: false
+            referencedRelation: "resellers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reseller_payments_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reseller_commissions: {
+        Row: {
+          amount: number
+          commission_date: string
+          created_at: string
+          description: string | null
+          id: string
+          paid_at: string | null
+          paid_by: string | null
+          recorded_by: string
+          reseller_id: string
+          status: string
+          store_id: string
+        }
+        Insert: {
+          amount: number
+          commission_date: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          paid_at?: string | null
+          paid_by?: string | null
+          recorded_by: string
+          reseller_id: string
+          status?: string
+          store_id: string
+        }
+        Update: {
+          amount?: number
+          commission_date?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          paid_at?: string | null
+          paid_by?: string | null
+          recorded_by?: string
+          reseller_id?: string
+          status?: string
+          store_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reseller_commissions_reseller_id_fkey"
+            columns: ["reseller_id"]
+            isOneToOne: false
+            referencedRelation: "resellers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reseller_commissions_store_id_fkey"
             columns: ["store_id"]
             isOneToOne: false
             referencedRelation: "stores"
@@ -1490,6 +1757,31 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      can_manage_stock_transfer_store: {
+        Args: { _store_id: string }
+        Returns: boolean
+      }
+      can_view_stock_transfer_store: {
+        Args: { _store_id: string }
+        Returns: boolean
+      }
+      create_stock_transfer_request: {
+        Args: {
+          p_from_store_id: string
+          p_items: Json
+          p_notes: string | null
+          p_reference: string | null
+          p_to_store_id: string
+        }
+        Returns: string
+      }
+      decide_stock_transfer_item: {
+        Args: {
+          p_decision: string
+          p_item_id: string
+        }
+        Returns: string
+      }
       bank_cash_to_account: {
         Args: {
           p_account_id?: string | null

@@ -6,6 +6,7 @@ import { StockItem } from "@/types";
 import { useUpdateInventoryOptimistic, useDeleteProductOptimistic } from "@/hooks/useOptimizedData";
 import { buildProductSearchIndex, searchProductIndex } from "@/lib/productSearch";
 import { useInstantClearDeferredValue } from "@/hooks/useInstantClearDeferredValue";
+import { usePaginatedData } from "@/components/VirtualizedTable";
 import { InventoryFilters } from "./inventory/InventoryFilters";
 import { InventoryTable } from "./inventory/InventoryTable";
 import { EditProductDialog } from "./inventory/EditProductDialog";
@@ -142,6 +143,14 @@ const InventoryManagement = ({
       return hashStockFilter === "critical" ? qty < critical : qty < low && qty >= critical;
     });
   }, [searchedStock, categoryFilter, supplierFilter, hashStockFilter, criticalStockThreshold, lowStockThreshold]);
+
+  // Add pagination for performance with large datasets
+  const paginatedStock = usePaginatedData(filteredStock, 50);
+  
+  // Reset pagination when filters change
+  useEffect(() => {
+    paginatedStock.reset();
+  }, [searchTerm, categoryFilter, supplierFilter, hashStockFilter]);
 
   const categoriesList = useMemo(() => {
     const s = new Set<string>();
@@ -478,9 +487,61 @@ const InventoryManagement = ({
       )}
 
       {/* ── Scrollable table ───────────────────────────────────────────────── */}
-      <div className="pb-6">
+      <div className="pb-6 space-y-4">
+        {/* Pagination info and controls */}
+        {paginatedStock.totalPages > 1 && (
+          <div className="flex items-center justify-between bg-muted/30 px-4 py-3 rounded-lg">
+            <div className="text-sm text-muted-foreground">
+              Showing {paginatedStock.data.length} of {paginatedStock.totalItems} items 
+              (Page {paginatedStock.currentPage + 1} of {paginatedStock.totalPages})
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={paginatedStock.previousPage}
+                disabled={!paginatedStock.hasPrevious}
+                className="gap-1"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+              
+              {/* Page number buttons */}
+              {Array.from({ length: Math.min(5, paginatedStock.totalPages) }, (_, i) => {
+                const page = Math.max(0, Math.min(
+                  paginatedStock.totalPages - 5,
+                  paginatedStock.currentPage - 2
+                )) + i;
+                return (
+                  <Button
+                    key={page}
+                    variant={page === paginatedStock.currentPage ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => paginatedStock.goToPage(page)}
+                    className="w-8 h-8 p-0"
+                  >
+                    {page + 1}
+                  </Button>
+                );
+              })}
+              
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={paginatedStock.nextPage}
+                disabled={!paginatedStock.hasMore}
+                className="gap-1"
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+        
         <InventoryTable
-          stockItems={filteredStock}
+          stockItems={paginatedStock.data}
           lowStockThreshold={lowStockThreshold}
           criticalStockThreshold={criticalStockThreshold}
           selectedIds={selectedIds}
@@ -609,7 +670,7 @@ const InventoryManagement = ({
           </DialogHeader>
           <div className="max-h-[60vh] space-y-4 overflow-y-auto py-4 pr-2">
             <p className="text-sm text-muted-foreground">
-              Update quantities for all filtered items ({filteredStock.length}).
+              Update quantities for filtered items ({filteredStock.length} total, showing {Math.min(50, filteredStock.length)} at a time).
             </p>
             <div className="overflow-hidden rounded-lg border bg-card/70">
               <Table>
@@ -622,14 +683,14 @@ const InventoryManagement = ({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredStock.length === 0 ? (
+                  {paginatedStock.data.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className="py-6 text-center text-muted-foreground">
                         No products
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredStock.map((item) => (
+                    paginatedStock.data.map((item) => (
                       <TableRow key={item.id}>
                         <TableCell className="font-semibold">{item.productName}</TableCell>
                         <TableCell className="text-sm text-muted-foreground">{item.category}</TableCell>
@@ -658,6 +719,31 @@ const InventoryManagement = ({
                 </TableBody>
               </Table>
             </div>
+            
+            {/* Pagination for bulk edit */}
+            {paginatedStock.totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={paginatedStock.previousPage}
+                  disabled={!paginatedStock.hasPrevious}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-sm text-muted-foreground">
+                  Page {paginatedStock.currentPage + 1} of {paginatedStock.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={paginatedStock.nextPage}
+                  disabled={!paginatedStock.hasMore}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button onClick={() => setIsBulkQtyOpen(false)}>Done</Button>

@@ -18,8 +18,8 @@ export const POS_PAGE_REGISTRY: readonly PosPageDefinition[] = [
   { id: "supplier-reports",   label: "Supplier reports",    roles: ["owner", "admin", "manager", "accountant"],      branchAssignable: true },
   { id: "stock-entry",        label: "Stock entry",         roles: ["owner", "admin", "manager"],                    branchAssignable: true },
   { id: "sales-entry",        label: "Sales entry",         roles: ["owner", "admin", "manager", "cashier"],         branchAssignable: true },
-  { id: "cash-sales-report",  label: "Cash sales report",   roles: ["owner", "admin", "manager", "accountant"],      branchAssignable: true },
   { id: "inventory",          label: "Inventory",           roles: ["owner", "admin", "manager"],                    branchAssignable: true },
+  { id: "stock-transfers",     label: "Stock transfers",      roles: ["owner", "admin", "manager"],                    branchAssignable: true },
   { id: "barcode-manager",    label: "Barcode manager",     roles: ["owner", "admin", "manager"],                    branchAssignable: true },
   { id: "customers",          label: "Customers",           roles: ["owner", "admin", "manager"],                    branchAssignable: true },
   { id: "expenses",           label: "Expenses",            roles: ["owner", "admin", "manager"],                    branchAssignable: true },
@@ -31,6 +31,7 @@ export const POS_PAGE_REGISTRY: readonly PosPageDefinition[] = [
   { id: "staff",              label: "Staff",               roles: ["owner", "admin", "manager"],                    branchAssignable: true },
   { id: "shifts",             label: "Shifts",              roles: ["owner", "admin", "manager", "cashier"],         branchAssignable: true },
   { id: "reports",            label: "Reports",             roles: ["owner", "admin", "manager", "boss", "accountant"], branchAssignable: true },
+  { id: "resellers",           label: "Resellers",           roles: ["owner", "admin"],                                branchAssignable: false },
   // Global/business-management pages deliberately remain unavailable to branch staff.
   { id: "stores",   label: "Stores",      roles: ["owner", "admin"], branchAssignable: false },
   { id: "security", label: "Security",    roles: ["owner", "admin"], branchAssignable: false },

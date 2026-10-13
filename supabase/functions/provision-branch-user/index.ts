@@ -15,7 +15,7 @@ const usernamePattern = /^[a-z0-9][a-z0-9._-]{2,48}$/i;
 const allowedRoles = new Set(["cashier", "manager", "admin", "accountant"]);
 const branchAssignablePages = new Set([
   "dashboard", "products", "suppliers", "supplier-reports",
-  "stock-entry", "sales-entry", "cash-sales-report",
+  "stock-entry", "sales-entry",
   "inventory", "barcode-manager", "customers", "expenses",
   "accounts", "banking", "scheduled-payments", "tracker",
   "returns", "staff", "shifts", "reports",

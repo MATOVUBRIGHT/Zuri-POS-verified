@@ -325,7 +325,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
     { id: "staff", label: "Staff & HR", icon: Users, roles: ["owner", "admin", "manager"] },
     { id: "shifts", label: "Shifts", icon: Clock, roles: ["owner", "admin", "manager", "cashier"] },
     { id: "reports", label: "Reports", icon: FileText, roles: ["owner", "admin", "manager"] },
-    { id: "cash-sales-report", label: "Cash Sales Report", icon: HandCoins, roles: ["owner", "admin", "manager"] },
+    { id: "resellers", label: "Resellers", icon: HandCoins, roles: ["owner", "admin"] },
     { id: "security", label: "Security", icon: Shield, roles: ["owner", "admin"] },
     { id: "settings", label: "Settings", icon: SettingsIcon, roles: ["owner", "admin"] },
   ];

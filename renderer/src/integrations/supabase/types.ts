@@ -1195,6 +1195,59 @@ export type Database = {
           },
         ]
       }
+      resellers: {
+        Row: {
+          business_name: string | null
+          created_at: string
+          created_by: string
+          email: string | null
+          id: string
+          is_application: boolean
+          name: string
+          notes: string | null
+          phone: string | null
+          status: string
+          store_id: string
+          updated_at: string
+        }
+        Insert: {
+          business_name?: string | null
+          created_at?: string
+          created_by: string
+          email?: string | null
+          id?: string
+          is_application?: boolean
+          name: string
+          notes?: string | null
+          phone?: string | null
+          status?: string
+          store_id: string
+          updated_at?: string
+        }
+        Update: {
+          business_name?: string | null
+          created_at?: string
+          created_by?: string
+          email?: string | null
+          id?: string
+          is_application?: boolean
+          name?: string
+          notes?: string | null
+          phone?: string | null
+          status?: string
+          store_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "resellers_store_id_fkey"
+            columns: ["store_id"]
+            isOneToOne: false
+            referencedRelation: "stores"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tax_configurations: {
         Row: {
           created_at: string
