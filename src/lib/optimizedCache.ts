@@ -1,5 +1,6 @@
 // Optimized caching utility for better performance
 import { cache } from '@/lib/cache';
+import { supabase } from '@/integrations/supabase/client';
 
 interface CacheOptions {
   ttl?: number;
@@ -45,39 +46,28 @@ class OptimizedCache {
       }
     }
 
-    // Check if request is already in flight
     const pendingRequest = this.requestCache.get(key);
-    if (pendingRequest) {
-      return pendingRequest;
+    if (pendingRequest) return pendingRequest;
+
+    const persistentPromise = this.checkPersistentCache<T>(key);
+    const cachedData = await Promise.race([
+      persistentPromise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 100)),
+    ]);
+    if (cachedData !== null) {
+      this.setMemoryCache(key, cachedData, ttl);
+      return cachedData;
     }
 
-    // Check persistent cache (IndexedDB) but don't block on it
-    const persistentPromise = this.checkPersistentCache<T>(key);
-    
-    // Start fetching immediately, don't wait for persistent cache
+    const pendingAfterPersistentCheck = this.requestCache.get(key);
+    if (pendingAfterPersistentCheck) return pendingAfterPersistentCheck;
+
     const request = this.fetchAndCache(key, fetcher, options);
     this.requestCache.set(key, request);
-
     try {
-      // Try to get from persistent cache quickly
-      const cachedData = await Promise.race([
-        persistentPromise,
-        new Promise(resolve => setTimeout(() => resolve(null), 100)) // 100ms timeout
-      ]);
-      
-      if (cachedData) {
-        // Cancel the network request and use cached data
-        this.setMemoryCache(key, cachedData, ttl);
-        this.requestCache.delete(key);
-        return cachedData as T;
-      }
-      
-      // Use network request
-      const result = await request;
-      return result;
-    } catch (error) {
-      this.requestCache.delete(key);
-      throw error;
+      return await request;
+    } finally {
+      if (this.requestCache.get(key) === request) this.requestCache.delete(key);
     }
   }
 
@@ -145,9 +135,12 @@ class OptimizedCache {
   }
 
   // Preload frequently accessed data
-  async preload<T>(key: string, fetcher: () => Promise<T>, options: CacheOptions = {}) {
-    if (!this.memoryCache.has(key) && !this.requestCache.has(key)) {
-      this.get(key, fetcher, { ...options, priority: 'low' });
+  async preload<T>(key: string, fetcher: () => Promise<T>, options: CacheOptions = {}): Promise<void> {
+    if (this.memoryCache.has(key) || this.requestCache.has(key)) return;
+    try {
+      await this.get(key, fetcher, { ...options, priority: 'low' });
+    } catch (error) {
+      console.warn(`Cache preload failed for "${key}":`, error);
     }
   }
 
@@ -199,18 +192,15 @@ export function useOptimizedCache<T>(
 export function preloadCommonData(storeId: string) {
   if (!storeId) return;
 
-  // Preload frequently accessed endpoints
-  optimizedCache.preload(`categories:${storeId}`, async () => {
-    const { data } = await import('@/integrations/supabase/client').then(m => 
-      m.supabase.from('categories').select('*').eq('store_id', storeId)
-    );
+  void optimizedCache.preload(`categories:${storeId}`, async () => {
+    const { data, error } = await supabase.from('categories').select('*').eq('store_id', storeId);
+    if (error) throw error;
     return data || [];
   }, { ttl: 10 * 60 * 1000 });
 
-  optimizedCache.preload(`payment_methods:${storeId}`, async () => {
-    const { data } = await import('@/integrations/supabase/client').then(m => 
-      m.supabase.from('payment_methods').select('*').eq('store_id', storeId)
-    );
+  void optimizedCache.preload(`payment_methods:${storeId}`, async () => {
+    const { data, error } = await supabase.from('payment_methods').select('*').eq('store_id', storeId);
+    if (error) throw error;
     return data || [];
   }, { ttl: 15 * 60 * 1000 });
 }
