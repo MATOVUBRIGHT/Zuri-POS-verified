@@ -135,57 +135,6 @@ class OptimizedCache {
     });
   }
 
-  private async fetchAndCache<T>(key: string, fetcher: () => Promise<T>, options: CacheOptions): Promise<T> {
-    const { ttl = 10 * 60 * 1000 } = options;
-    
-    try {
-      const data = await fetcher();
-      
-      // Store in both memory and persistent cache (non-blocking)
-      this.setMemoryCache(key, data, ttl);
-      
-      // Don't await persistent cache write to avoid blocking
-      setTimeout(() => {
-        cache.set(key, data, ttl / 1000).catch(() => {}); // Ignore errors
-      }, 0);
-      
-      return data;
-    } catch (error) {
-      // On error, try to return stale data if available
-      const staleData = this.memoryCache.get(key);
-      if (staleData) {
-        console.warn('Returning stale data due to fetch error:', error);
-        return staleData.data;
-      }
-      throw error;
-    }
-  }
-
-  private cleanup() {
-    const now = Date.now();
-    for (const [key, item] of this.memoryCache.entries()) {
-      if (now - item.timestamp > item.ttl) {
-        this.memoryCache.delete(key);
-      }
-    }
-  }
-
-  private setMemoryCache(key: string, data: any, ttl: number) {
-    // Implement LRU eviction if cache is full
-    if (this.memoryCache.size >= this.maxMemorySize) {
-      const oldestKey = this.memoryCache.keys().next().value;
-      if (oldestKey) {
-        this.memoryCache.delete(oldestKey);
-      }
-    }
-
-    this.memoryCache.set(key, {
-      data,
-      timestamp: Date.now(),
-      ttl
-    });
-  }
-
   private cleanup() {
     const now = Date.now();
     for (const [key, item] of this.memoryCache.entries()) {
