@@ -52,6 +52,7 @@ import { PageLoader } from "@/components/ui/loading-spinner";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { buildProductSearchIndex, searchProductIndex } from "@/lib/productSearch";
+import { consumeManualSync } from "@/lib/syncLimits";
 import type { StockItem } from "@/types";
 import { usePrinter } from "@/providers/PrinterProvider";
 import PrinterSetupDialog from "@/components/PrinterSetupDialog";
@@ -146,10 +147,19 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
 
   const handleSync = async () => {
     if (!currentStoreId || !isOnline) return;
+    const syncAllowance = consumeManualSync(currentStoreId);
+    if (!syncAllowance.allowed) {
+      const minutes = Math.max(1, Math.ceil((syncAllowance.retryAfterMs || 0) / 60000));
+      toast({ title: "Sync limit reached", description: `You can use Sync again in about ${minutes} minutes.`, variant: "destructive" });
+      return;
+    }
     setIsSyncing(true);
     try {
       // In web app, sync means full refetch of all relevant tables
-      await queryClient.refetchQueries();
+      await queryClient.refetchQueries({
+        type: "active",
+        predicate: (query) => query.queryKey.includes(currentStoreId),
+      });
       if (onRefresh) await Promise.resolve(onRefresh());
       toast({ title: "✓ Sync Complete", description: "All data refreshed from Supabase" });
     } catch (error: any) {

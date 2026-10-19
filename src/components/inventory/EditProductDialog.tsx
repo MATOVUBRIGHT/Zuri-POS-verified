@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, Upload, X, Image as ImageIcon, Edit, DollarSign, Barcode, Tag, Info, Package } from 'lucide-react';
 import { updateByIdWithSchemaFallback } from '@/lib/supabaseSchemaFallback';
+import { compressImage } from '@/lib/imageCompression';
 
 interface EditProductDialogProps {
   open: boolean;
@@ -92,13 +93,14 @@ export const EditProductDialog = ({
     if (!product.store_id) {
       throw new Error('This product is missing its store assignment. Refresh Products and try again.');
     }
-    const fileExt = imageFile.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const optimizedFile = await compressImage(imageFile);
+    const fileExt = optimizedFile.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
     const fileName = `product-${product.id}-${Date.now()}.${fileExt}`;
     const filePath = `${product.store_id}/product-images/${fileName}`;
 
     const { error: uploadError } = await supabase.storage
       .from('pos-files')
-      .upload(filePath, imageFile, { upsert: false, contentType: imageFile.type || 'image/jpeg' });
+      .upload(filePath, optimizedFile, { upsert: false, contentType: optimizedFile.type || 'image/jpeg' });
 
     if (uploadError) {
       throw new Error(`Could not upload product image: ${uploadError.message}`);

@@ -25,6 +25,11 @@ const RECIPIENTS = [
 
 const FROM_EMAIL = Deno.env.get("NOTIFY_FROM_EMAIL") || "BrePOS <no-reply@brepos.example>";
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
+const NOTIFY_SECRET = Deno.env.get("PENDING_NOTIFY_SECRET") || Deno.env.get("SUBSCRIPTION_NOTIFY_SECRET");
+
+const escapeHtml = (value: unknown) => String(value ?? "").replace(/[&<>\"']/g, (char) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
+}[char] || char));
 
 async function sendWithResend(subject: string, html: string, text: string) {
   if (!RESEND_API_KEY) {
@@ -65,6 +70,11 @@ function buildContent(p: PendingPayload) {
   const plan = p.plan_name || "Unknown Plan";
   const subId = p.subscription_id;
   const created = p.created_at || new Date().toISOString();
+  const safeName = escapeHtml(userName);
+  const safeEmail = escapeHtml(userEmail);
+  const safePlan = escapeHtml(plan);
+  const safeSubId = escapeHtml(subId);
+  const safeCreated = escapeHtml(created);
 
   const text = `A user subscription is pending approval.\n\n` +
     `User: ${userName} <${userEmail}>\n` +
@@ -78,10 +88,10 @@ function buildContent(p: PendingPayload) {
       <h2>Subscription Pending Approval</h2>
       <p>A user subscription requires verification:</p>
       <ul>
-        <li><strong>User:</strong> ${userName} &lt;${userEmail}&gt;</li>
-        <li><strong>Plan:</strong> ${plan}</li>
-        <li><strong>Subscription ID:</strong> ${subId}</li>
-        <li><strong>Created At:</strong> ${created}</li>
+        <li><strong>User:</strong> ${safeName} &lt;${safeEmail}&gt;</li>
+        <li><strong>Plan:</strong> ${safePlan}</li>
+        <li><strong>Subscription ID:</strong> ${safeSubId}</li>
+        <li><strong>Created At:</strong> ${safeCreated}</li>
       </ul>
       <p>Please log in to the Admin Dashboard to review and approve this subscription.</p>
     </div>
@@ -99,6 +109,21 @@ Deno.serve(async (req: Request) => {
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const bearer = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  const headerSecret = req.headers.get("x-pending-notify-secret") || "";
+  if (!NOTIFY_SECRET) {
+    return new Response(JSON.stringify({ error: "Notification endpoint is not configured." }), {
+      status: 503,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (bearer !== NOTIFY_SECRET && headerSecret !== NOTIFY_SECRET) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

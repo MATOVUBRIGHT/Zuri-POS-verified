@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Camera, Upload, Check } from "lucide-react";
 import { PageLoader, InlineSpinner } from "@/components/ui/loading-spinner";
+import { compressImage } from "@/lib/imageCompression";
 
 export default function MobileAction() {
   const [search] = useSearchParams();
@@ -75,11 +76,12 @@ export default function MobileAction() {
       if (action.type === 'product_image') {
         if (!file) throw new Error('Choose or take a product image first');
         if (!action.product_id) throw new Error('This product image link has expired. Generate a new QR code from Products.');
-        const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+        const optimizedFile = await compressImage(file);
+        const ext = optimizedFile.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
         const path = `${storeId}/product-images/${action.product_id}-${Date.now()}.${ext}`;
-        const { error: uploadError } = await supabase.storage.from('pos-files').upload(path, file, {
+        const { error: uploadError } = await supabase.storage.from('pos-files').upload(path, optimizedFile, {
           upsert: false,
-          contentType: file.type || 'image/jpeg',
+          contentType: optimizedFile.type || 'image/jpeg',
         });
         if (uploadError) throw uploadError;
         const { data: publicData } = supabase.storage.from('pos-files').getPublicUrl(path);

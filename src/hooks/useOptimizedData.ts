@@ -49,11 +49,6 @@ const backgroundPreloader = {
 };
 
 export function useOptimizedInventory(storeId: string | null, userId: string | null) {
-    // Background preload user data on first load
-    if (storeId && userId) {
-        backgroundPreloader.preloadUserData(storeId, userId);
-    }
-    
     return useQuery({
         queryKey: ['inventory', storeId],
         queryFn: async () => {

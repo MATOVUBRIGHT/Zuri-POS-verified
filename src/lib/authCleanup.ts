@@ -43,13 +43,9 @@ export class AuthCleanup {
       }
     } catch (error) {
       console.warn('Auth cleanup failed:', error);
-      // If cleanup fails, try to clear everything
-      try {
-        await supabase.auth.signOut({ scope: 'local' });
-        this.clearAuthCache();
-      } catch (fallbackError) {
-        console.warn('Fallback auth cleanup failed:', fallbackError);
-      }
+      // A transient network/Web Lock failure is not proof that the session is
+      // invalid. Never sign users out from a generic cleanup failure; the
+      // auth state listener will handle a real SIGNED_OUT event.
     }
   }
 

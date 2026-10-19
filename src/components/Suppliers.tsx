@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { Plus, Search, Pencil, Trash2, Truck, Phone, Mail, MapPin, Building2, DollarSign, Package, TrendingUp, CreditCard, Undo2, Loader2, FileBarChart, Download, Upload } from "lucide-react";
 import { logAudit } from "@/lib/audit";
+import { escapeHtml, safeCssColor } from "@/lib/html";
 import SupplierImportDialog from "@/components/SupplierImportDialog";
 
 interface Supplier {
@@ -339,16 +340,19 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
     const rowsByMonth = months.map((month) => ({ month, rows: supplierSales.filter((sale) => sale.date.slice(0, 7) === month) }));
     let template: any = {};
     try { template = JSON.parse(localStorage.getItem("zuri_supplier_report_template") || "{}"); } catch { /* use defaults */ }
-    const company = template.companyName || "Zuri POS";
-    const accent = template.accent || "#d6a437";
-    const navy = template.navy || "#0d3157";
+    const company = escapeHtml(template.companyName || "Zuri POS");
+    const address = escapeHtml(template.address || "Supplier sales report");
+    const title = escapeHtml(template.title || "SUPPLIER SALES REPORT");
+    const supplierName = escapeHtml(viewSupplier.name);
+    const accent = safeCssColor(template.accent, "#d6a437");
+    const navy = safeCssColor(template.navy, "#0d3157");
     const sections = rowsByMonth.map(({ month, rows }) => {
       const items = rows.reduce((sum, row) => sum + row.quantity, 0);
       const total = rows.reduce((sum, row) => sum + row.amount, 0);
-      const body = rows.map((row) => `<tr><td>${row.date}</td><td>${row.productName}</td><td>${row.quantity}</td><td>${fmtCurrency(row.amount)}</td></tr>`).join("") || `<tr><td colspan="4">No items sold in this month.</td></tr>`;
+      const body = rows.map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.productName)}</td><td>${escapeHtml(row.quantity)}</td><td>${escapeHtml(fmtCurrency(row.amount))}</td></tr>`).join("") || `<tr><td colspan="4">No items sold in this month.</td></tr>`;
       return `<section class="month"><h2>${month}</h2><table><thead><tr><th>Date</th><th>Item sold</th><th>Quantity</th><th>Amount</th></tr></thead><tbody>${body}</tbody></table><div class="total"><strong>${items.toLocaleString()} items sold</strong><strong>${fmtCurrency(total)}</strong></div></section>`;
     }).join("") || `<p>No sales recorded for the selected months.</p>`;
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${viewSupplier.name} sales report</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;background:#edf1f5;font-family:Arial,sans-serif;color:#173754}.page{width:210mm;min-height:297mm;margin:20px auto;background:#fff;padding:16mm;box-shadow:0 8px 28px #0002}header{border-bottom:4px solid ${accent};display:flex;justify-content:space-between;padding-bottom:12px}h1{color:${navy};margin:0;font-size:25px}h2{color:${navy};margin:24px 0 8px;border-left:4px solid ${accent};padding-left:8px}.muted{color:#60758a}table{width:100%;border-collapse:collapse;font-size:11px}th{background:${navy};color:#fff;text-align:left;padding:8px}td{border:1px solid #d7e0e8;padding:8px}td:nth-child(3),td:nth-child(4){text-align:right}.month{page-break-inside:avoid}.total{display:flex;justify-content:space-between;background:#f4f7fa;border-bottom:2px solid ${accent};padding:10px}.grand{margin-top:24px;padding:14px;background:#fff5d9;border:1px solid ${accent};font-size:17px}@media print{body{background:white}.page{margin:0;box-shadow:none}}</style></head><body><main class="page"><header><div><h1>${company}</h1><p class="muted">${template.address || "Supplier sales report"}</p></div><div><strong>${template.title || "SUPPLIER SALES REPORT"}</strong><p class="muted">Generated ${new Date().toLocaleDateString()}</p></div></header><h2>${viewSupplier.name}</h2><p class="muted">Actual items sold, grouped by selected month</p>${sections}<div class="grand"><strong>Total sales</strong><strong>${fmtCurrency(supplierSales.filter((sale) => months.includes(sale.date.slice(0, 7))).reduce((sum, sale) => sum + sale.amount, 0))}</strong></div></main></body></html>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${supplierName} sales report</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;background:#edf1f5;font-family:Arial,sans-serif;color:#173754}.page{width:210mm;min-height:297mm;margin:20px auto;background:#fff;padding:16mm;box-shadow:0 8px 28px #0002}header{border-bottom:4px solid ${accent};display:flex;justify-content:space-between;padding-bottom:12px}h1{color:${navy};margin:0;font-size:25px}h2{color:${navy};margin:24px 0 8px;border-left:4px solid ${accent};padding-left:8px}.muted{color:#60758a}table{width:100%;border-collapse:collapse;font-size:11px}th{background:${navy};color:#fff;text-align:left;padding:8px}td{border:1px solid #d7e0e8;padding:8px}td:nth-child(3),td:nth-child(4){text-align:right}.month{page-break-inside:avoid}.total{display:flex;justify-content:space-between;background:#f4f7fa;border-bottom:2px solid ${accent};padding:10px}.grand{margin-top:24px;padding:14px;background:#fff5d9;border:1px solid ${accent};font-size:17px}@media print{body{background:white}.page{margin:0;box-shadow:none}}</style></head><body><main class="page"><header><div><h1>${company}</h1><p class="muted">${address}</p></div><div><strong>${title}</strong><p class="muted">Generated ${escapeHtml(new Date().toLocaleDateString())}</p></div></header><h2>${supplierName}</h2><p class="muted">Actual items sold, grouped by selected month</p>${sections}<div class="grand"><strong>Total sales</strong><strong>${escapeHtml(fmtCurrency(supplierSales.filter((sale) => months.includes(sale.date.slice(0, 7))).reduce((sum, sale) => sum + sale.amount, 0)))}</strong></div></main></body></html>`;
     const printWindow = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
     if (!printWindow) { toast({ title: "Allow popups to download the report", variant: "destructive" }); return; }
     printWindow.document.write(html); printWindow.document.close(); printWindow.focus(); printWindow.print();

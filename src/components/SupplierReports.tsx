@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, BarChart3, Check, Download, Mail, Palette, Printer, RefreshCw, Search, Send, Settings2, Upload, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtCurrency } from "@/lib/currency";
+import { escapeHtml, safeCssColor, safeImageDataUrl } from "@/lib/html";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -225,9 +226,29 @@ const SupplierReports = ({ currentStoreId, onBack }: SupplierReportsProps) => {
     ? `${(suppliers.find(s => s.id === a.id)?.address || "ZZZ").toLowerCase()}-${a.name.toLowerCase()}`.localeCompare(`${(suppliers.find(s => s.id === b.id)?.address || "ZZZ").toLowerCase()}-${b.name.toLowerCase()}`)
     : a.name.localeCompare(b.name));
   const previewReport = reports.find(r => r.id === previewSupplierId) || reports[0];
+  const safeReportTemplate = (value: ReportTemplate) => ({
+    ...value,
+    companyName: escapeHtml(value.companyName),
+    address: escapeHtml(value.address),
+    email: escapeHtml(value.email),
+    phone: escapeHtml(value.phone),
+    rightBrand: escapeHtml(value.rightBrand),
+    rightCaption: escapeHtml(value.rightCaption),
+    title: escapeHtml(value.title),
+    subtitle: escapeHtml(value.subtitle),
+    companyDetailsTitle: escapeHtml(value.companyDetailsTitle),
+    signature: escapeHtml(value.signature),
+    footerText: escapeHtml(value.footerText),
+    thankYou: escapeHtml(value.thankYou),
+    navy: safeCssColor(value.navy, "#12345b"),
+    accent: safeCssColor(value.accent, "#d6a437"),
+    logoDataUrl: safeImageDataUrl(value.logoDataUrl),
+  });
   const updateSent = (ids: string[]) => { const next = { ...sent, ...Object.fromEntries(ids.map(id => [id, true])) }; setSent(next); localStorage.setItem("zuri_supplier_reports_sent", JSON.stringify(next)); };
-  const reportHtml = (report: ReportRow) => {
-    const rows = report.products.map((p, index) => `<tr><td>${index + 1}</td><td>${p.name}</td><td>${p.quantity}</td><td>${fmtCurrency(p.cost / Math.max(p.quantity, 1))}</td><td>${fmtCurrency(p.sales)}</td></tr>`).join("") || `<tr><td></td><td>No sales recorded for this period</td><td>0</td><td>${fmtCurrency(0)}</td><td>${fmtCurrency(0)}</td></tr>`;
+  const reportHtml = (reportInput: ReportRow, templateValue: ReportTemplate = template) => {
+    const report = { ...reportInput, name: escapeHtml(reportInput.name), company: escapeHtml(reportInput.company), phone: escapeHtml(reportInput.phone), email: escapeHtml(reportInput.email), address: escapeHtml(reportInput.address), id: escapeHtml(reportInput.id), products: reportInput.products.map(p => ({ ...p, name: escapeHtml(p.name) })) };
+    const template = safeReportTemplate(templateValue);
+    const rows = report.products.map((p, index) => `<tr><td>${index + 1}</td><td>${p.name}</td><td>${p.quantity}</td><td>${escapeHtml(fmtCurrency(p.cost / Math.max(p.quantity, 1)))}</td><td>${escapeHtml(fmtCurrency(p.sales))}</td></tr>`).join("") || `<tr><td></td><td>No sales recorded for this period</td><td>0</td><td>${escapeHtml(fmtCurrency(0))}</td><td>${escapeHtml(fmtCurrency(0))}</td></tr>`;
     const logo = template.logoDataUrl ? `<img class="logo" src="${template.logoDataUrl}" alt="Company logo" />` : `<div class="logo-mark">✦</div>`;
     return `<div class="page" style="--navy:${template.navy};--accent:${template.accent}"><div class="top-band"></div><header class="header"><div class="brand">${logo}<div class="company"><h1>${template.companyName}</h1><p>${template.address}</p><div class="contact"><span>✉ ${template.email}</span><span>☎ ${template.phone}</span></div></div></div><div class="brand-right"><div class="script">${template.rightBrand}</div><small>${template.rightCaption}</small></div></header><section class="title-row"><div class="title"><h2>${template.title}</h2><p>${template.subtitle}</p></div><div class="date-box"><strong>📅 Report Period:</strong><span>${month === "all" ? "All months" : month}</span></div></section><section class="info-box"><div class="info-col"><div class="info-title">🏢 ${template.companyDetailsTitle}</div><p>${template.companyName}</p><p>Tel: <span class="blue">${template.phone}</span></p><p>Email: ${template.email}</p></div><div class="info-col"><div class="supplier-field"><span class="label">Supplier Name:</span><span class="line">${report.name}</span></div>${report.company ? `<div class="supplier-field"><span class="label">Company:</span><span class="line">${report.company}</span></div>` : ""}${report.phone ? `<div class="supplier-field"><span class="label">Tel:</span><span>${report.phone}</span></div>` : ""}${report.email ? `<div class="supplier-field"><span class="label">Email:</span><span>${report.email}</span></div>` : ""}${report.address ? `<div class="supplier-field"><span class="label">Address:</span><span>${report.address}</span></div>` : ""}<div class="supplier-field"><span class="label">Supplier Report #:</span><span>SR-${report.id.slice(0, 8).toUpperCase()}</span></div><div class="supplier-field"><span class="label">Created:</span><span>${new Date().toLocaleDateString()}</span></div></div></section><table><thead><tr><th>#</th><th>Description</th><th>Quantity</th><th>Unit Cost</th><th>Total Sales</th></tr></thead><tbody>${rows}</tbody></table><section class="totals"><div class="total-line"><strong>Items sold</strong><span>${report.items}</span></div><div class="total-line"><strong>Sales total</strong><span>${fmtCurrency(report.sales)}</span></div><div class="total-line"><strong>Cost price</strong><span>${fmtCurrency(report.cost)}</span></div><div class="total-line"><strong>Brand Fee (${report.brandFeePct}%)</strong><span>${fmtCurrency(report.fee)}</span></div><div class="grand"><span>Grand Total</span><span>${fmtCurrency(report.sales + report.fee)}</span></div></section><section class="bottom"><div class="thanks"><strong>${template.thankYou}</strong>We appreciate your continued partnership.</div><div class="signature"><div class="sign">${template.signature}</div><div class="rule">${template.companyName}</div></div></section><div class="footer-wave"></div><div class="footer-text">${template.footerText}</div></div>`;
   };
@@ -241,7 +262,8 @@ const SupplierReports = ({ currentStoreId, onBack }: SupplierReportsProps) => {
 const printViaIframe = (html: string) => {
   const frame = document.createElement("iframe");
   frame.setAttribute("aria-hidden", "true");
-  frame.setAttribute("title", "report-print");
+    frame.setAttribute("title", "report-print");
+    frame.setAttribute("sandbox", "allow-scripts");
   frame.style.position = "fixed";
   // Hide it off-screen with real dimensions. A 0x0 iframe has no layout
   // viewport, so print() emits a blank page or nothing at all.

@@ -377,7 +377,7 @@ const Products = ({ currentStoreId, stockData, onUpdateStock, onDeleteStock }: P
                   <div className="p-3 space-y-1.5">
                     <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-muted/50">
                       {product.productImage ? (
-                        <img src={product.productImage} alt="" className="h-full w-full object-cover" />
+                        <img src={product.productImage} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                       ) : (
                         <div className="flex h-full items-center justify-center"><Package className="h-8 w-8 text-primary/45" /></div>
                       )}
@@ -447,7 +447,7 @@ const Products = ({ currentStoreId, stockData, onUpdateStock, onDeleteStock }: P
                   <div className="flex items-start gap-4">
                     <div className="w-16 h-16 rounded-2xl bg-primary/15 flex items-center justify-center shrink-0">
                       {p.productImage ? (
-                        <img src={p.productImage} alt={p.productName} className="w-full h-full object-cover rounded-2xl" />
+                        <img src={p.productImage} alt={p.productName} loading="lazy" decoding="async" className="w-full h-full object-cover rounded-2xl" />
                       ) : (
                         <Package className="h-8 w-8 text-primary" />
                       )}

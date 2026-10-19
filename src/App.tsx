@@ -12,7 +12,7 @@ import { toast as notify } from "sonner";
 import { PrinterProvider } from "@/providers/PrinterProvider";
 import { ShiftProvider, useShift } from "@/providers/ShiftProvider";
 import { SubscriptionProvider, useSubscription } from "@/providers/SubscriptionProvider";
-import { QuickAppSkeleton } from "@/components/AppSkeleton";
+import { PageLoader } from "@/components/ui/loading-spinner";
 import { startupOptimizer } from "./lib/startupOptimizer";
 
 // Lazy loading for all routes to improve initial load time
@@ -121,7 +121,7 @@ const SubscriptionGuard = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
 
   // Only show loading if we're not stable yet (prevents blinking during auth)
-  if (!isStable && shiftLoading && !user) return <QuickAppSkeleton />;
+  if (!isStable && shiftLoading && !user) return <PageLoader text="Checking your session…" className="min-h-screen" />;
 
   if (!user) {
     return <Navigate to="/auth" state={{ from: location }} replace />;
@@ -143,7 +143,7 @@ const AuthShiftGuard = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
 
   // Only show loading if we're not stable yet (prevents blinking)
-  if (!isStable && shiftLoading && !user) return <QuickAppSkeleton />;
+  if (!isStable && shiftLoading && !user) return <PageLoader text="Checking your session…" className="min-h-screen" />;
 
   if (!user) {
     return <Navigate to="/auth" state={{ from: location }} replace />;
@@ -167,7 +167,7 @@ const AppRoutes = () => {
   const useAuthShell = shouldUseAuthShell(location.pathname);
 
   const routes = (
-    <Suspense fallback={<QuickAppSkeleton />}>
+    <Suspense fallback={<PageLoader text="Loading page…" className="min-h-screen" />}>
       <Routes>
         {/* Admin routes - outside AuthShiftGuard */}
         <Route path="/admin-login" element={<AdminLogin />} />
@@ -224,7 +224,7 @@ const App = () => {
         <BrowserRouter
           future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
         >
-          <Suspense fallback={<QuickAppSkeleton />}>
+          <Suspense fallback={<PageLoader text="Loading page…" className="min-h-screen" />}>
             <Routes>
               <Route path="/mobile" element={<MobileAction />} />
               <Route path="*" element={<MobileAction />} />

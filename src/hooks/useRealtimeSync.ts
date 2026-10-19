@@ -4,19 +4,23 @@ import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { BALANCES_KEY } from "@/hooks/usePaymentAccounts";
 import { POLLED_TABLES, WATCHED_TABLES } from "@/lib/watchedTables";
+import { automaticSyncIntervalMs, shouldRunAutomaticSync } from "@/lib/syncLimits";
 
 // Realtime is the primary path. When the socket is unavailable we fall back to
 // polling, but only for high-churn tables, only while the tab is visible, and on
 // a slower interval: this runs per logged-in user and free-tier request quota is
 // finite, so an unconditional 5s poll over every watched table is expensive.
-const POLL_INTERVAL_MS = 15_000;
-const BACKGROUND_POLL_INTERVAL = 60_000;
+// Realtime remains immediate when available. Polling is only a safety net,
+// limited to two automatic refreshes per hour when the socket is unavailable.
+const POLL_INTERVAL_MS = automaticSyncIntervalMs;
 
 export function useRealtimeSync(storeId: string | null) {
   const queryClient = useQueryClient();
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const pollRef = useRef<number | null>(null);
   const channelStatusRef = useRef<string>("");
+  const pendingTablesRef = useRef<Set<string>>(new Set());
+  const invalidateTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!storeId) return;
@@ -25,9 +29,9 @@ export function useRealtimeSync(storeId: string | null) {
       if (pollRef.current !== null) return;
       if (typeof document !== "undefined" && document.hidden) return;
       pollRef.current = window.setInterval(() => {
-        if (document.hidden) return;
+        if (document.hidden || !shouldRunAutomaticSync(storeId)) return;
         POLLED_TABLES.forEach((table) => {
-          queryClient.refetchQueries({ queryKey: [table, storeId] });
+          queryClient.refetchQueries({ queryKey: [table, storeId], type: "active" });
         });
       }, POLL_INTERVAL_MS);
     };
@@ -67,19 +71,21 @@ export function useRealtimeSync(storeId: string | null) {
           filter: `store_id=eq.${storeId}`,
         },
         () => {
-          // Invalidate the query for this table so it refetches
-          queryClient.invalidateQueries({ queryKey: [table, storeId] });
-          // Also invalidate generic keys used by some components
-          queryClient.invalidateQueries({ queryKey: [table] });
-
-          // `payment_account_balances` is an RPC, not a table, so it is not in
-          // WATCHED_TABLES and cannot invalidate itself. Balances are derived from
-          // the ledger, so a ledger change must refresh them too. Without this the
-          // balance cards stayed stale until a focus/staleTime refresh, which made
-          // account balances look non-live.
-          if (table === "payment_account_ledger") {
-            queryClient.invalidateQueries({ queryKey: [BALANCES_KEY, storeId] });
-          }
+          // Coalesce bursts from one save/import into one cache invalidation.
+          pendingTablesRef.current.add(table);
+          if (invalidateTimerRef.current !== null) return;
+          invalidateTimerRef.current = window.setTimeout(() => {
+            const changedTables = [...pendingTablesRef.current];
+            pendingTablesRef.current.clear();
+            invalidateTimerRef.current = null;
+            changedTables.forEach((changedTable) => {
+              queryClient.invalidateQueries({ queryKey: [changedTable, storeId] });
+              queryClient.invalidateQueries({ queryKey: [changedTable] });
+              if (changedTable === "payment_account_ledger") {
+                queryClient.invalidateQueries({ queryKey: [BALANCES_KEY, storeId] });
+              }
+            });
+          }, 180);
         }
       );
     });
@@ -112,6 +118,11 @@ export function useRealtimeSync(storeId: string | null) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
+      if (invalidateTimerRef.current !== null) {
+        window.clearTimeout(invalidateTimerRef.current);
+        invalidateTimerRef.current = null;
+      }
+      pendingTablesRef.current.clear();
       stopPolling();
     };
   }, [storeId, queryClient]);
@@ -122,20 +133,20 @@ export function useRealtimeSync(storeId: string | null) {
 export function useVisibilityRefresh(storeId: string | null) {
   const queryClient = useQueryClient();
   const hiddenAtRef = useRef<number | null>(null);
-  const BACKGROUND_POLL_INTERVAL = 60_000;
-
   useEffect(() => {
     if (!storeId) return;
 
     let backgroundPollId: number | null = null;
 
     const refetchStoreTables = () => {
+      if (!shouldRunAutomaticSync(storeId)) return;
       // Only the tables that actually move while the user works. Refreshing all
       // watched tables on every tab switch re-read whole tables that realtime
       // already keeps current, which is expensive on the free tier.
       POLLED_TABLES.forEach((table) => {
         queryClient.refetchQueries({
           queryKey: [table, storeId],
+          type: "active",
         });
       });
     };
@@ -144,7 +155,7 @@ export function useVisibilityRefresh(storeId: string | null) {
       if (backgroundPollId !== null) return;
       // No immediate refetch when hiding: the user is leaving the window, and
       // realtime keeps the cache current anyway. Just arm the slow interval.
-      backgroundPollId = window.setInterval(refetchStoreTables, BACKGROUND_POLL_INTERVAL);
+      backgroundPollId = window.setInterval(refetchStoreTables, automaticSyncIntervalMs);
     };
 
     const stopBackgroundPolling = () => {
@@ -162,7 +173,7 @@ export function useVisibilityRefresh(storeId: string | null) {
         const hiddenAt = hiddenAtRef.current;
         hiddenAtRef.current = null;
         // If hidden for more than 5 seconds, silently refetch all store data
-        if (hiddenAt && Date.now() - hiddenAt > 5_000) {
+        if (hiddenAt && Date.now() - hiddenAt > automaticSyncIntervalMs) {
           refetchStoreTables();
         }
         stopBackgroundPolling();

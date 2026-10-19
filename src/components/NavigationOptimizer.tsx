@@ -1,61 +1,12 @@
-import { useEffect, useState } from "react";
-import { useLocation, useNavigationType } from "react-router-dom";
+import { useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { useQueryClient } from "@tanstack/react-query";
 
 // Navigation optimizer for smooth transitions and prefetching
 const NavigationOptimizer = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
-  const navigationType = useNavigationType();
-  const queryClient = useQueryClient();
-  const [isTransitioning, setIsTransitioning] = useState(false);
-  const [previousLocation, setPreviousLocation] = useState(location);
-
-  // Prefetch data for likely next routes
-  useEffect(() => {
-    const prefetchRoutes = async () => {
-      try {
-        await Promise.all([
-          queryClient.prefetchQuery({
-            queryKey: ["dashboard-data"],
-            queryFn: async () => []
-          }),
-          queryClient.prefetchQuery({
-            queryKey: ["sales-history"],
-            queryFn: async () => []
-          })
-        ]);
-      } catch (error) {
-        console.error("Prefetch error:", error);
-      }
-    };
-
-    // Start prefetching after initial load
-    const timer = setTimeout(prefetchRoutes, 2000);
-    return () => clearTimeout(timer);
-  }, [queryClient]);
-
-  // Handle navigation transitions
-  useEffect(() => {
-    if (navigationType === "POP") {
-      // Browser back/forward navigation
-      setIsTransitioning(true);
-      const timer = setTimeout(() => setIsTransitioning(false), 300);
-      return () => clearTimeout(timer);
-    } else if (location.pathname !== previousLocation.pathname) {
-      // Regular navigation
-      setIsTransitioning(true);
-      const timer = setTimeout(() => setIsTransitioning(false), 300);
-      return () => clearTimeout(timer);
-    }
-  }, [location, navigationType, previousLocation]);
-
-  // Update previous location
-  useEffect(() => {
-    if (location.pathname !== previousLocation.pathname) {
-      setPreviousLocation(location);
-    }
-  }, [location, previousLocation]);
+  // Route data is loaded by each page. Avoid fake empty prefetch queries and
+  // timer-based transition state, which caused extra renders during navigation.
 
   // Page transition animations
   const pageVariants = {
@@ -73,49 +24,7 @@ const NavigationOptimizer = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
-  // Route-based prefetching component
-  const RoutePrefetcher = () => {
-    const location = useLocation();
-    const queryClient = useQueryClient();
-
-    useEffect(() => {
-      // Prefetch data based on current route
-      const prefetchForRoute = async () => {
-        try {
-          switch (location.pathname) {
-            case "/":
-              await queryClient.prefetchQuery({
-                queryKey: ["dashboard-data"],
-                queryFn: async () => []
-              });
-              break;
-
-            case "/sales":
-              await queryClient.prefetchQuery({
-                queryKey: ["sales-data"],
-                queryFn: async () => []
-              });
-              break;
-
-            case "/inventory":
-              await queryClient.prefetchQuery({
-                queryKey: ["inventory-data"],
-                queryFn: async () => []
-              });
-              break;
-          }
-        } catch (error) {
-          console.error("Route prefetch error:", error);
-        }
-      };
-
-      // Delay prefetching slightly to avoid blocking initial render
-      const timer = setTimeout(prefetchForRoute, 1000);
-      return () => clearTimeout(timer);
-    }, [location, queryClient]);
-
-    return null;
-  };
+  const RoutePrefetcher = () => null;
 
   // Scroll position manager
   const ScrollPositionManager = ({ children }: { children: React.ReactNode }) => {
@@ -156,6 +65,7 @@ const NavigationOptimizer = ({ children }: { children: React.ReactNode }) => {
         initial="initial"
         animate="enter"
         exit="exit"
+        transition={{ duration: 0.16, ease: "easeOut" }}
         className="min-h-screen"
       >
         <RoutePrefetcher />

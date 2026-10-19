@@ -89,20 +89,20 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // Mark as stable once we have a user
       setIsStable(true);
 
-      // Check if user is admin
-      const { data: hasAdminRole } = await supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' });
-      const adminStatus = !!hasAdminRole;
-      setIsAdmin(adminStatus);
-
       // Prefer the branch selected by the explicit POS route. The query remains
       // RLS-scoped, so a stale or unauthorised stored id simply falls back below.
       const preferredStoreId = localStorage.getItem('brec_current_store');
-      const { data: preferredStore } = preferredStoreId
-        ? await supabase.from('stores').select('*').eq('id', preferredStoreId).maybeSingle()
-        : { data: null };
-      // Fetch store
-      const { data: stores } = await supabase.from('stores').select('*').eq('user_id', user.id).limit(1);
-      const { data: accessData } = await supabase.from('store_access').select('store_id').eq('user_id', user.id).limit(1);
+      const [adminResult, preferredResult, ownedResult, accessResult] = await Promise.all([
+        supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' }),
+        preferredStoreId ? supabase.from('stores').select('*').eq('id', preferredStoreId).maybeSingle() : Promise.resolve({ data: null }),
+        supabase.from('stores').select('*').eq('user_id', user.id).limit(1),
+        supabase.from('store_access').select('store_id').eq('user_id', user.id).limit(1),
+      ]);
+      const adminStatus = !!adminResult.data;
+      setIsAdmin(adminStatus);
+      const preferredStore = preferredResult.data;
+      const stores = ownedResult.data;
+      const accessData = accessResult.data;
       const storeId = preferredStore?.id || stores?.[0]?.id || accessData?.[0]?.store_id;
 
       let resolvedStore: Store | null = null;

@@ -4,19 +4,22 @@ import { cn } from "@/lib/utils";
 
 // Keeps short-lived loads visible long enough to avoid a one-frame flash.
 export function useMinimumLoading(isLoading: boolean, minMs = 350): boolean {
+  // Do not hold the whole page behind a spinner for hundreds of milliseconds.
+  // A short floor prevents a flash while keeping navigation responsive.
+  const effectiveMinMs = Math.min(minMs, 180);
   const mountedAt = useRef<number>(Date.now());
   const [show, setShow] = useState(true);
 
   useEffect(() => {
     if (isLoading) return;
-    const remaining = minMs - (Date.now() - mountedAt.current);
+    const remaining = effectiveMinMs - (Date.now() - mountedAt.current);
     if (remaining <= 0) {
       setShow(false);
       return;
     }
     const timer = setTimeout(() => setShow(false), remaining);
     return () => clearTimeout(timer);
-  }, [isLoading, minMs]);
+  }, [isLoading, effectiveMinMs]);
 
   return show;
 }
