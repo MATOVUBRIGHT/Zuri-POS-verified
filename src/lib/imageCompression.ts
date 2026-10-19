@@ -1,5 +1,5 @@
-const DEFAULT_MAX_BYTES = 420 * 1024;
-const DEFAULT_MAX_DIMENSION = 1440;
+const DEFAULT_MAX_BYTES = 300 * 1024;
+const DEFAULT_MAX_DIMENSION = 1200;
 
 const loadImage = (file: File): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
   const url = URL.createObjectURL(file);
@@ -14,7 +14,7 @@ const canvasBlob = (canvas: HTMLCanvasElement, type: string, quality: number) =>
 
 /** Compress camera/uploaded images before storage while keeping product-card detail sharp. */
 export async function compressImage(file: File, options?: { maxBytes?: number; maxDimension?: number }): Promise<File> {
-  if (!file.type.startsWith("image/") || file.size <= 120 * 1024) return file;
+  if (!file.type.startsWith("image/") || file.size <= 160 * 1024) return file;
 
   const maxBytes = options?.maxBytes ?? DEFAULT_MAX_BYTES;
   const maxDimension = options?.maxDimension ?? DEFAULT_MAX_DIMENSION;
@@ -38,10 +38,10 @@ export async function compressImage(file: File, options?: { maxBytes?: number; m
     { type: "image/jpeg", extension: "jpg" },
   ];
   for (const candidate of candidates) {
-    for (const quality of [0.86, 0.78, 0.7]) {
+    for (const quality of [0.82, 0.72]) {
       const blob = await canvasBlob(canvas, candidate.type, quality);
       if (!blob) continue;
-      if (blob.size <= maxBytes || quality === 0.7) {
+      if (blob.size <= maxBytes || quality === 0.72) {
         if (blob.size >= file.size && scale === 1) return file;
         const baseName = file.name.replace(/\.[^.]+$/, "") || "product-image";
         return new File([blob], `${baseName}.${candidate.extension}`, { type: candidate.type, lastModified: Date.now() });

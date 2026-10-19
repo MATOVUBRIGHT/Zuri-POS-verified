@@ -18,6 +18,7 @@ export default function MobileAction() {
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<any>({ description: "", category: "Other", amount: "", date: new Date().toISOString().split('T')[0], notes: "" });
   const [file, setFile] = useState<File | null>(null);
+  const [optimizingImage, setOptimizingImage] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -59,13 +60,30 @@ export default function MobileAction() {
     return () => { active = false; };
   }, [token, productId, requestedRedirect, search, navigate]);
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (!f) return; setFile(f); };
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+    setOptimizingImage(true);
+    try {
+      // Prepare immediately after capture/selection so Save only performs the
+      // network upload on slower phones and mobile connections.
+      setFile(await compressImage(selected));
+    } catch {
+      setFile(selected);
+    } finally {
+      setOptimizingImage(false);
+    }
+  };
 
   const submit = async () => {
     if (!action) return;
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      // The storage/database requests validate the access token server-side;
+      // use the locally persisted session here so Save does not add another
+      // round trip on mobile networks.
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
       if (!user) {
         // ask user to login and return here
         try { localStorage.setItem('post_auth_redirect', window.location.pathname + window.location.search); } catch {}
@@ -76,7 +94,7 @@ export default function MobileAction() {
       if (action.type === 'product_image') {
         if (!file) throw new Error('Choose or take a product image first');
         if (!action.product_id) throw new Error('This product image link has expired. Generate a new QR code from Products.');
-        const optimizedFile = await compressImage(file);
+        const optimizedFile = file;
         const ext = optimizedFile.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
         const path = `${storeId}/product-images/${action.product_id}-${Date.now()}.${ext}`;
         const { error: uploadError } = await supabase.storage.from('pos-files').upload(path, optimizedFile, {
@@ -103,9 +121,10 @@ export default function MobileAction() {
       }
       let receiptUrl: string | null = null;
       if (file) {
-        const ext = file.name.split('.').pop();
+        const optimizedReceipt = file;
+        const ext = optimizedReceipt.name.split('.').pop();
         const path = `${storeId}/${Date.now()}.${ext}`;
-        const { error: upErr } = await supabase.storage.from('receipts').upload(path, file);
+        const { error: upErr } = await supabase.storage.from('receipts').upload(path, optimizedReceipt, { contentType: optimizedReceipt.type || 'image/jpeg' });
         if (!upErr) receiptUrl = path;
       }
       const payload = {
@@ -136,10 +155,10 @@ export default function MobileAction() {
     <div className="mx-auto max-w-md space-y-5 p-5">
       <div><h3 className="text-xl font-semibold">Product image</h3><p className="mt-1 text-sm text-muted-foreground">Take a photo or choose an image. It will sync to the POS computer after saving.</p></div>
       <div className="rounded-xl border border-dashed p-5 text-center">
-        {file ? <p className="text-sm font-medium">{file.name}</p> : <p className="text-sm text-muted-foreground">No image selected yet</p>}
+        {optimizingImage ? <p className="text-sm font-medium">Preparing a smaller image…</p> : file ? <p className="text-sm font-medium">{file.name}</p> : <p className="text-sm text-muted-foreground">No image selected yet</p>}
         <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} className="mt-4 block w-full text-sm" />
       </div>
-      <Button onClick={submit} disabled={loading || !file} className="w-full gap-2">{loading ? <InlineSpinner /> : <><Check className="h-4 w-4" />Save product image</>}</Button>
+      <Button onClick={submit} disabled={loading || optimizingImage || !file} className="w-full gap-2">{loading || optimizingImage ? <InlineSpinner /> : <><Check className="h-4 w-4" />Save product image</>}</Button>
     </div>
   );
 
@@ -165,7 +184,7 @@ export default function MobileAction() {
           <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} className="block w-full" />
           <div className="mt-2 flex gap-2">
             <Button onClick={() => fileRef.current?.click()} className="gap-2"><Camera className="h-4 w-4" />Open Camera</Button>
-            <Button onClick={submit} disabled={loading} className="gap-2">{loading ? <InlineSpinner /> : <><Upload className="h-4 w-4" />Save</>}</Button>
+            <Button onClick={submit} disabled={loading || optimizingImage} className="gap-2">{loading || optimizingImage ? <InlineSpinner /> : <><Upload className="h-4 w-4" />Save</>}</Button>
           </div>
         </div>
       </div>

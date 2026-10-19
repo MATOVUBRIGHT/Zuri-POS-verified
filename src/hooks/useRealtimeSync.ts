@@ -55,8 +55,9 @@ export function useRealtimeSync(storeId: string | null) {
 
     // Clean up previous channel
     if (channelRef.current) {
-      supabase.removeChannel(channelRef.current);
+      const channelToRemove = channelRef.current;
       channelRef.current = null;
+      if (channelStatusRef.current === "SUBSCRIBED") void supabase.removeChannel(channelToRemove);
     }
 
     const channel = supabase.channel(`store-sync-${storeId}`);
@@ -115,8 +116,11 @@ export function useRealtimeSync(storeId: string | null) {
       // hidden-tab listener could stop or start polling for the *current* store.
       document.removeEventListener("visibilitychange", handleVisibility);
       if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
+        const channelToRemove = channelRef.current;
         channelRef.current = null;
+        // Avoid closing a socket that is still negotiating during a quick
+        // remount; Supabase reports that race as a misleading WebSocket error.
+        if (channelStatusRef.current === "SUBSCRIBED") void supabase.removeChannel(channelToRemove);
       }
       if (invalidateTimerRef.current !== null) {
         window.clearTimeout(invalidateTimerRef.current);
