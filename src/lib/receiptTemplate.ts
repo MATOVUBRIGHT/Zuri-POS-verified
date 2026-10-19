@@ -28,7 +28,6 @@ export function generateReceiptHTML({
   const receiptNo = getReceiptNumber(sale);
   // Generate a verification code from the receipt number + total
   const verificationCode = `${receiptNo.replace(/\D/g,'').slice(-4)}${Math.floor(sale.totalAmount)}`.padEnd(20,'0').slice(0,20);
-  const tillNo = currentStaff.id ? '1' : '1';
 
   return `<!DOCTYPE html>
 <html>
@@ -111,7 +110,6 @@ export function generateReceiptHTML({
   <!-- RECEIPT META -->
   <div class="totals-row"><span>Receipt No</span><span class="bold">${receiptNo}</span></div>
   <div class="totals-row"><span></span><span class="bold">TAX INVOICE / CASH SALE</span></div>
-  <div class="totals-row"><span></span><span>Till ${tillNo}</span></div>
   <div class="totals-row"><span>Date</span><span>${dateStr}</span></div>
 
   <div class="dashed"></div>
@@ -196,7 +194,6 @@ export function generateReceiptHTML({
     <div class="qr-placeholder">QR</div>
     <div>
       <div>You Were Served By &nbsp; <span class="bold">${currentStaff.name}</span></div>
-      <div style="margin-top:2px;">Till${tillNo}</div>
       <div class="small" style="margin-top:4px;">Thank You !! Please come again.</div>
     </div>
   </div>

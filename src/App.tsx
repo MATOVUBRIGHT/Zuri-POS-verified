@@ -41,14 +41,15 @@ const enterMovesToNextInput = (event: KeyboardEvent) => {
 
   const target = event.target;
   if (!(target instanceof HTMLInputElement)) return;
+  if (target.dataset.enterSubmit === "true" || target.closest("[data-enter-navigation='off']")) return;
   if (["hidden", "button", "submit", "reset", "checkbox", "radio", "file", "range"].includes(target.type)) return;
 
   const form = target.form;
   if (!form) return;
 
   const fields = Array.from(form.querySelectorAll<HTMLInputElement>(
-    'input:not([disabled]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"])'
-  )).filter((field) => field.offsetParent !== null);
+    'input:not([disabled]):not([readonly]):not([aria-hidden="true"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"])'
+  )).filter((field) => field.getClientRects().length > 0 && !field.closest("[aria-hidden='true']"));
   const currentIndex = fields.indexOf(target);
   const nextField = fields[currentIndex + 1];
 
@@ -56,8 +57,11 @@ const enterMovesToNextInput = (event: KeyboardEvent) => {
   if (!nextField) return;
 
   event.preventDefault();
-  nextField.focus();
-  nextField.select?.();
+  event.stopPropagation();
+  window.requestAnimationFrame(() => {
+    nextField.focus({ preventScroll: true });
+    nextField.select?.();
+  });
 };
 
 // Configure React Query for optimal performance

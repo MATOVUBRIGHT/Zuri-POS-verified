@@ -1058,10 +1058,14 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
+    const saleStaffName = sale.staffName
+      || (sale.staff_id && sale.staff_id === currentStaff.id ? currentStaff.name : null)
+      || "Owner";
+
     const htmlContent = generateReceiptHTML({
       sale,
       storeInfo,
-      currentStaff,
+      currentStaff: { id: sale.staff_id || null, name: saleStaffName },
       getReceiptNumber
     });
 
@@ -1364,6 +1368,8 @@ const requiresPaymentDetails = isPaidSale && hasMethodRow && !isCashMethod;
         products,
         totalAmount,
         paidInCash: actualPaidInCash,
+        staff_id: currentStaff.id,
+        staffName: currentStaff.name,
         paymentMethodId: formData.paidInCash === true ? resolvedPaymentMethodId : null,
         paymentDetails: formData.paidInCash === true ? {
           mobileMoneyNumber: formData.mobileMoneyNumber || null,

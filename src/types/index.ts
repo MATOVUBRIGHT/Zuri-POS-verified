@@ -130,6 +130,7 @@ export interface SaleItem {
   products: Product[];
   created_at?: string;
   staff_id?: string | null;
+  staffName?: string | null;
   reseller_id?: string | null;
   paymentMethodId?: string | null;
   paymentDetails?: {

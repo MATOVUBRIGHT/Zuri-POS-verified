@@ -78,6 +78,7 @@ import {
 
 type Branch = { id: string; store_name: string };
 type ExecContact = { id: string; display_name: string; role: string };
+type ChatAlert = { fromLabel: string; text: string };
 type BranchRow = {
   id: string;
   sender_id: string;
@@ -111,6 +112,8 @@ export default function StoreChat({
   );
   const [branches, setBranches] = useState<Branch[]>([]);
   const [execContacts, setExecContacts] = useState<ExecContact[]>([]);
+  const [alert, setAlert] = useState<ChatAlert | null>(null);
+  const [typingAlert, setTypingAlert] = useState<{ fromLabel: string } | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [deletions, setDeletions] = useState<ChatDeletion[]>([]);
   const [target, setTarget] = useState("");
@@ -122,6 +125,9 @@ export default function StoreChat({
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
   const knownMessageIds = useRef(new Set<string>());
   const bottomRef = useRef<HTMLDivElement>(null);
+  const signalChannelRef = useRef<any>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     const {
@@ -240,6 +246,10 @@ export default function StoreChat({
         !knownMessageIds.current.has(message.id)
       ) {
         knownMessageIds.current.add(message.id);
+        setAlert({
+          fromLabel: branches.find((branch) => branch.id === message.sender_store_id)?.store_name || "Another branch",
+          text: message.message.slice(0, 80),
+        });
         toast({ title: "New branch message", description: "Open chat to read your new message." });
       }
       void load();
@@ -277,7 +287,16 @@ export default function StoreChat({
           table: "executive_messages",
           filter: `recipient_store_id=eq.${contextStoreId}`,
         },
-        () => void load(),
+        (payload: any) => {
+          const message = payload?.new;
+          if (message?.recipient_store_id === contextStoreId && message.sender_user_id !== userId) {
+            setAlert({
+              fromLabel: execContacts.find((contact) => contact.id === message.sender_user_id)?.display_name || "Executive",
+              text: String(message.message || "").slice(0, 80),
+            });
+          }
+          void load();
+        },
       )
       .on(
         "postgres_changes",
@@ -290,11 +309,34 @@ export default function StoreChat({
         () => void load(),
       )
       .subscribe();
+    const signalChannel = (supabase as any)
+      .channel("branch-chat-global")
+      .on("broadcast", { event: "typing" }, (payload: any) => {
+        const signal = payload?.payload;
+        if (!signal || signal.senderId === userId || !signal.isTyping) {
+          if (signal?.senderId !== userId) setTypingAlert(null);
+          return;
+        }
+        const recipientMatches = signal.recipientUserId === userId
+          || signal.recipientStoreId === contextStoreId;
+        if (!recipientMatches) return;
+        const fromLabel = branches.find((branch) => branch.id === signal.senderStoreId)?.store_name
+          || execContacts.find((contact) => contact.id === signal.senderId)?.display_name
+          || "Someone";
+        setTypingAlert({ fromLabel });
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        typingTimerRef.current = setTimeout(() => setTypingAlert(null), 2200);
+      })
+      .subscribe();
+    signalChannelRef.current = signalChannel;
     return () => {
       void supabase.removeChannel(channel);
       void supabase.removeChannel(executiveChannel);
+      signalChannelRef.current = null;
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      void supabase.removeChannel(signalChannel);
     };
-  }, [contextStoreId, load, toast, userId]);
+  }, [contextStoreId, load, toast, userId, branches, execContacts]);
 
   /* ── derived ──────────────────────────────────────────────────────────── */
 
@@ -406,6 +448,7 @@ export default function StoreChat({
         toast({ title: "Message not sent", description: error.message, variant: "destructive" });
         return;
       }
+      void signalChannelRef.current?.send({ type: "broadcast", event: "typing", payload: { senderId: userId, isTyping: false } });
       setDraft("");
       toast({ title: "Message sent", description: `Sent to ${active.name}.` });
       void load();
@@ -426,6 +469,7 @@ export default function StoreChat({
       toast({ title: "Message not sent", description: error.message, variant: "destructive" });
       return;
     }
+    void signalChannelRef.current?.send({ type: "broadcast", event: "typing", payload: { senderId: userId, isTyping: false } });
     setDraft("");
     toast({
       title: "Message sent",
@@ -435,6 +479,25 @@ export default function StoreChat({
           : `Sent to ${targets[0].store_name}.`,
     });
     void load();
+  };
+
+  const broadcastTyping = (value: string) => {
+    if (!userId || !signalChannelRef.current) return;
+    void signalChannelRef.current.send({
+      type: "broadcast",
+      event: "typing",
+      payload: {
+        senderId: userId,
+        senderStoreId: contextStoreId,
+        recipientUserId: active?.scope === "user" ? active.peerId : null,
+        recipientStoreId: active?.scope === "store" ? active.peerId : null,
+        isTyping: Boolean(value.trim()),
+      },
+    });
+    if (stopTypingTimerRef.current) clearTimeout(stopTypingTimerRef.current);
+    stopTypingTimerRef.current = setTimeout(() => {
+      void signalChannelRef.current?.send({ type: "broadcast", event: "typing", payload: { senderId: userId, isTyping: false } });
+    }, 1800);
   };
 
   const confirmDelete = async () => {
@@ -487,7 +550,14 @@ export default function StoreChat({
   /* ── render ───────────────────────────────────────────────────────────── */
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <>
+      {(alert || typingAlert) && (
+        <div className="fixed bottom-4 right-4 z-[70] w-[min(22rem,calc(100vw-2rem))] space-y-2">
+          {typingAlert && <div className="rounded-lg border bg-background px-3 py-2 text-xs shadow-lg"><span className="font-semibold">{typingAlert.fromLabel}</span> is typing…</div>}
+          {alert && <div className="rounded-lg border bg-background p-3 shadow-lg"><p className="text-sm font-semibold">New message from {alert.fromLabel}</p><p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{alert.text}</p><div className="mt-2 flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => setAlert(null)}>Dismiss</Button><Button size="sm" onClick={() => { setAlert(null); setOpen(true); }}>Open chat</Button></div></div>}
+        </div>
+      )}
+      <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
         <Button variant="ghost" size="icon" className="relative" title="Branch communications">
           <MessageSquare className="h-5 w-5" />
@@ -749,7 +819,7 @@ export default function StoreChat({
               <div className="flex items-end gap-2">
                 <Input
                   value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
+                  onChange={(event) => { setDraft(event.target.value); broadcastTyping(event.target.value); }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
@@ -863,6 +933,7 @@ export default function StoreChat({
           </ScrollArea>
         )}
       </SheetContent>
-    </Sheet>
+      </Sheet>
+    </>
   );
 }

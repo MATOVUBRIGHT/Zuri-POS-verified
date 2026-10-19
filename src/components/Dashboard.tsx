@@ -39,6 +39,7 @@ interface DashboardProps {
         cashOnHand: number;
         stockValue: number;
         dailySales: number;
+        dailyProfit: number;
         weeklySales: number;
         monthlySales: number;
         totalPurchaseCost: number;
@@ -377,9 +378,9 @@ const Dashboard = ({
                         <TrendingUp className="h-4 w-4 text-white/70" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">{fmtCurrency(financialData.totalProfit)}</div>
+                        <div className="text-2xl font-bold">{fmtCurrency(financialData.dailyProfit)}</div>
                         <p className="text-xs text-white/70 flex items-center mt-1">
-                            Profit report - Click to view
+                            Today's net profit - Click to view
                         </p>
                     </CardContent>
                 </Card>

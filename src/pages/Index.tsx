@@ -166,6 +166,15 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
     void refreshShift();
   }, [posStoreId, refreshShift, setCurrentPage, setCurrentStoreId, setPageParams]);
 
+  // QR/app links can request the Products workspace after authentication.
+  // Consume the query once so a refresh does not keep reapplying the request.
+  useEffect(() => {
+    if (location.pathname !== "/" || location.search !== "?page=products" || !roleResolved) return;
+    setCurrentPage("products");
+    setPageParams(null);
+    navigate("/", { replace: true });
+  }, [location.pathname, location.search, navigate, roleResolved, setCurrentPage, setPageParams]);
+
   // Discard stale operational page IDs (sales, inventory, legacy dashboard,
   // etc.) whenever an executive is at `/`. Rendering also uses executivePage
   // below, so there is no one-frame fallback while this effect is scheduled.
@@ -1030,7 +1039,10 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
     monthStart.setMonth(monthStart.getMonth() - 1);
 
     // Single pass over salesData for all period totals
-    let dailySales = 0, weeklySales = 0, monthlySales = 0;
+    let dailySales = 0, weeklySales = 0, monthlySales = 0, dailyCOGS = 0, dailyExpenses = 0;
+    const normalizeProductName = (value: string) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const stockById = new Map(stockData.map((item) => [item.id, item] as const));
+    const stockByName = new Map(stockData.map((item) => [normalizeProductName(item.productName), item] as const));
     for (const sale of salesData) {
       if (!sale.dateOfSale) continue;
       const amount = sale.totalAmount || 0;
@@ -1040,9 +1052,24 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
         monthlySales += amount;
         if (d >= weekStart) {
           weeklySales += amount;
-          if (toLocalDateKey(d) === todayKey) dailySales += amount;
+          if (toLocalDateKey(d) === todayKey) {
+            dailySales += amount;
+            for (const product of sale.products || []) {
+              const stockItem = (product.id ? stockById.get(product.id) : undefined)
+                || stockByName.get(normalizeProductName(product.productName));
+              const costPerUnit = Number(stockItem?.cost_per_unit ?? stockItem?.costPerUnit ?? 0) || 0;
+              const itemsPerSachet = Number(stockItem?.items_per_sachet ?? 1) || 1;
+              const unitCost = product.sellType === "sachet" ? costPerUnit * itemsPerSachet : costPerUnit;
+              dailyCOGS += (Number(product.quantity) || 0) * unitCost;
+            }
+          }
         }
       }
+    }
+
+    for (const expense of expensesData) {
+      const d = parseAnyDateToLocalDate(expense.date);
+      if (d && toLocalDateKey(d) === todayKey) dailyExpenses += Number(expense.amount) || 0;
     }
 
     return {
@@ -1051,13 +1078,14 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
       dailySales,
       weeklySales,
       monthlySales,
+      dailyProfit: dailySales - dailyCOGS - dailyExpenses,
       totalPurchaseCost: totalCOGS,
       totalRevenue,
       totalProfit,
       availableCash,
       totalExpenses,
     };
-  }, [availableCash, salesData, stockValue, totalCOGS, totalRevenue, totalProfit, totalExpenses]);
+  }, [availableCash, expensesData, salesData, stockData, stockValue, totalCOGS, totalRevenue, totalProfit, totalExpenses]);
   const renderPage = () => {
     // At the root, executive users never render an operational POS page. This
     // guard intentionally precedes legacy page/error handling, whose state may

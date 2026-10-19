@@ -10,7 +10,9 @@ import { PageLoader, InlineSpinner } from "@/components/ui/loading-spinner";
 
 export default function MobileAction() {
   const [search] = useSearchParams();
-  const token = search.get("token") || search.get("action") || "";
+  const token = search.get("token") || (search.get("action") !== "product_image" ? search.get("action") || "" : "");
+  const productId = search.get("product_id") || "";
+  const requestedRedirect = search.get("redirect") || "";
   const [action, setAction] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<any>({ description: "", category: "Other", amount: "", date: new Date().toISOString().split('T')[0], notes: "" });
@@ -25,15 +27,26 @@ export default function MobileAction() {
       setLoading(true);
       try {
         if (!token) {
-          // fallback: allow direct links with only store_id (no token/table present)
-          setAction({ type: 'expense_upload', store_id: search.get('store_id') || null });
+          // A plain mobile link is an app entry link. Send the user through the
+          // normal login screen, then return to the requested app page.
+          if (!productId && requestedRedirect === 'products') {
+            try { localStorage.setItem('post_auth_redirect', '/?page=products'); } catch {}
+            navigate('/auth', { replace: true });
+            return;
+          }
+          // Keep supporting direct links with a product or store action.
+          setAction(productId
+            ? { type: 'product_image', product_id: productId, store_id: search.get('store_id') || null }
+            : { type: 'expense_upload', store_id: search.get('store_id') || null });
           setLoading(false);
           return;
         }
         const { data, error } = await (supabase.from('mobile_actions' as any) as any).select('*').eq('token', token).maybeSingle();
         if (error || !data) {
           // not found or table missing — fallback to token-less experience
-          setAction({ type: 'expense_upload', store_id: search.get('store_id') || null });
+          setAction(productId
+            ? { type: 'product_image', product_id: productId, store_id: search.get('store_id') || null }
+            : { type: 'expense_upload', store_id: search.get('store_id') || null });
         } else {
           setAction(data);
         }
@@ -43,7 +56,7 @@ export default function MobileAction() {
     };
     void load();
     return () => { active = false; };
-  }, [token, search]);
+  }, [token, productId, requestedRedirect, search, navigate]);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (!f) return; setFile(f); };
 
@@ -59,6 +72,19 @@ export default function MobileAction() {
       }
       const storeId = action.store_id || search.get('store_id');
       if (!storeId) throw new Error('No store specified');
+      if (action.type === 'product_image') {
+        if (!file) throw new Error('Choose or take a product image first');
+        const ext = file.name.split('.').pop() || 'jpg';
+        const path = `product-images/${action.product_id}-${Date.now()}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from('pos-files').upload(path, file, { upsert: true });
+        if (uploadError) throw uploadError;
+        const { data: publicData } = supabase.storage.from('pos-files').getPublicUrl(path);
+        const { error: updateError } = await supabase.from('inventory').update({ product_image: publicData.publicUrl }).eq('id', action.product_id).eq('store_id', storeId);
+        if (updateError) throw updateError;
+        toast({ title: 'Product image saved', description: 'The image is now available on the POS computer.' });
+        setLoading(false);
+        return;
+      }
       let receiptUrl: string | null = null;
       if (file) {
         const ext = file.name.split('.').pop();
@@ -89,6 +115,17 @@ export default function MobileAction() {
 
   if (loading) return <PageLoader text="Loading mobile action…" className="min-h-screen" />;
   if (!action) return <div className="p-6 text-center">No mobile action found. Ask the POS to generate a QR and try again.</div>;
+
+  if (action.type === 'product_image') return (
+    <div className="mx-auto max-w-md space-y-5 p-5">
+      <div><h3 className="text-xl font-semibold">Product image</h3><p className="mt-1 text-sm text-muted-foreground">Take a photo or choose an image. It will sync to the POS computer after saving.</p></div>
+      <div className="rounded-xl border border-dashed p-5 text-center">
+        {file ? <p className="text-sm font-medium">{file.name}</p> : <p className="text-sm text-muted-foreground">No image selected yet</p>}
+        <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} className="mt-4 block w-full text-sm" />
+      </div>
+      <Button onClick={submit} disabled={loading || !file} className="w-full gap-2">{loading ? <InlineSpinner /> : <><Check className="h-4 w-4" />Save product image</>}</Button>
+    </div>
+  );
 
   return (
     <div className="p-4 max-w-md mx-auto">

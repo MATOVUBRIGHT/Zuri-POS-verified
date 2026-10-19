@@ -85,6 +85,7 @@ import {
 type Branch = { id: string; store_name: string };
 type ExecUser = { id: string; display_name: string };
 type NewMsgAlert = { id: string; fromLabel: string; text: string };
+type TypingAlert = { fromLabel: string };
 
 interface ExecChatProps {
   userId: string | null;
@@ -132,10 +133,14 @@ export default function ExecChat({ userId }: ExecChatProps) {
   const [composing, setComposing] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
   const [alert, setAlert] = useState<NewMsgAlert | null>(null);
+  const [typingAlert, setTypingAlert] = useState<TypingAlert | null>(null);
 
   const knownIds = useRef(new Set<string>());
   const bottomRef = useRef<HTMLDivElement>(null);
   const listEndRef = useRef<HTMLDivElement>(null);
+  const realtimeChannelRef = useRef<any>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* ── loading ──────────────────────────────────────────────────────────── */
 
@@ -274,7 +279,10 @@ export default function ExecChat({ userId }: ExecChatProps) {
     const handleNew = (payload: any) => {
       const msg = payload.new as Row | undefined;
       if (!msg) return;
-      if (knownIds.current.has(msg.id)) return;
+      if (knownIds.current.has(msg.id)) {
+        void load();
+        return;
+      }
       knownIds.current.add(msg.id);
 
       // Only alert the *recipient* — never the sender
@@ -297,15 +305,34 @@ export default function ExecChat({ userId }: ExecChatProps) {
     };
 
     const channel = (supabase as any)
-      .channel(`exec-chat-${userId}`)
+      .channel("exec-chat-global")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "executive_messages" },
+        { event: "*", schema: "public", table: "executive_messages" },
         handleNew,
       )
+      .on("broadcast", { event: "typing" }, (payload: any) => {
+        const signal = payload?.payload;
+        if (!signal || signal.senderId === userId || !signal.isTyping) {
+          if (signal?.senderId !== userId) setTypingAlert(null);
+          return;
+        }
+        const recipientMatches = signal.recipientUserId === userId
+          || (signal.recipientStoreId && branches.some((branch) => branch.id === signal.recipientStoreId));
+        if (!recipientMatches) return;
+        const fromLabel = branches.find((b) => b.id === signal.senderStoreId)?.store_name
+          || execUsers.find((u) => u.id === signal.senderId)?.display_name
+          || "Someone";
+        setTypingAlert({ fromLabel });
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        typingTimerRef.current = setTimeout(() => setTypingAlert(null), 2200);
+      })
       .subscribe();
+    realtimeChannelRef.current = channel;
 
     return () => {
+      realtimeChannelRef.current = null;
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
       void supabase.removeChannel(channel);
     };
   }, [userId, branches, execUsers, load]);
@@ -383,8 +410,29 @@ export default function ExecChat({ userId }: ExecChatProps) {
       toast({ title: "Message not sent", description: error.message, variant: "destructive" });
       return;
     }
+    void realtimeChannelRef.current?.send({ type: "broadcast", event: "typing", payload: { senderId: userId, isTyping: false } });
     setDraft("");
     void load();
+  };
+
+  const broadcastTyping = (value: string) => {
+    if (!userId || !realtimeChannelRef.current) return;
+    const [recipientScope, recipientId] = active?.key?.split(":", 2) || [];
+    void realtimeChannelRef.current.send({
+      type: "broadcast",
+      event: "typing",
+      payload: {
+        senderId: userId,
+        senderStoreId: sendAsStore !== "__self__" ? sendAsStore : null,
+        recipientUserId: recipientScope === "user" ? recipientId : null,
+        recipientStoreId: recipientScope === "store" ? recipientId : null,
+        isTyping: Boolean(value.trim()),
+      },
+    });
+    if (stopTypingTimerRef.current) clearTimeout(stopTypingTimerRef.current);
+    stopTypingTimerRef.current = setTimeout(() => {
+      void realtimeChannelRef.current?.send({ type: "broadcast", event: "typing", payload: { senderId: userId, isTyping: false } });
+    }, 1800);
   };
 
   /** Hide a thread for this user only; a newer message brings it back. */
@@ -435,31 +483,16 @@ export default function ExecChat({ userId }: ExecChatProps) {
   return (
     <>
       {/* New-message alert — recipient only */}
-      <Dialog open={Boolean(alert)} onOpenChange={() => setAlert(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <MessageSquare className="h-5 w-5 text-primary" />
-              New message from {alert?.fromLabel}
-            </DialogTitle>
-          </DialogHeader>
-          <p className="line-clamp-3 text-sm text-muted-foreground">{alert?.text}</p>
-          <div className="flex gap-2 pt-2">
-            <Button variant="outline" className="flex-1" onClick={() => setAlert(null)}>
-              Dismiss
-            </Button>
-            <Button
-              className="flex-1"
-              onClick={() => {
-                setAlert(null);
-                setOpen(true);
-              }}
-            >
-              Open chat
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {(alert || typingAlert) && (
+        <div className="fixed bottom-4 right-4 z-[70] w-[min(22rem,calc(100vw-2rem))] space-y-2">
+          {typingAlert && <div className="rounded-lg border bg-background px-3 py-2 text-xs shadow-lg"><span className="font-semibold">{typingAlert.fromLabel}</span> is typing…</div>}
+          {alert && <div className="rounded-lg border bg-background p-3 shadow-lg">
+            <p className="text-sm font-semibold">New message from {alert.fromLabel}</p>
+            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{alert.text}</p>
+            <div className="mt-2 flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => setAlert(null)}>Dismiss</Button><Button size="sm" onClick={() => { setAlert(null); setOpen(true); }}>Open chat</Button></div>
+          </div>}
+        </div>
+      )}
 
       {/* Delete confirmation */}
       <AlertDialog
@@ -685,7 +718,7 @@ export default function ExecChat({ userId }: ExecChatProps) {
                 <div className="flex items-end gap-2">
                   <Input
                     value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
+                    onChange={(e) => { setDraft(e.target.value); broadcastTyping(e.target.value); }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();

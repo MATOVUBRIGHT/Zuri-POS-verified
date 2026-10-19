@@ -12,12 +12,13 @@ import {
   Search, Package, RotateCw, DollarSign, Barcode, Tag,
   TrendingUp, AlertTriangle, Box, Boxes, ShoppingBag,
   Edit2, ChevronRight, Layers, Info, Truck, Calendar,
-  Grid3X3, List, Copy, Trash2
+  Grid3X3, List, Copy, Trash2, ImagePlus, Smartphone, QrCode
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { StockItem } from "@/types";
 import { LoadingSpinner, PageLoader, useMinimumLoading } from "@/components/ui/loading-spinner";
+import { EditProductDialog } from "@/components/inventory/EditProductDialog";
 
 interface ProductsProps {
   currentStoreId?: string | null;
@@ -37,6 +38,9 @@ const Products = ({ currentStoreId, stockData, onUpdateStock, onDeleteStock }: P
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<StockItem | null>(null);
+  const [imageEditorOpen, setImageEditorOpen] = useState(false);
+  const [imageEditorProduct, setImageEditorProduct] = useState<StockItem | null>(null);
+  const [phoneImageProduct, setPhoneImageProduct] = useState<StockItem | null>(null);
   const [editForm, setEditForm] = useState({
     productName: "", category: "", retail: 0, wholesale: 0, costPerUnit: 0,
     barcode: "", packaging_type: "sachet", unit_name: "item", items_per_sachet: 1,
@@ -159,6 +163,7 @@ const Products = ({ currentStoreId, stockData, onUpdateStock, onDeleteStock }: P
         reorder_quantity: item.reorder_quantity || 10, notes: item.notes, packaging_type: item.packaging_type,
         unit_name: item.unit_name, barcode: item.barcode, barcode_type: item.barcode_type,
         barcode_mode: item.barcode_mode, supplier: item.supplier, size: item.size,
+        productImage: item.product_image || "",
       })));
       toast({ title: "✓ Refreshed", description: `${data?.length || 0} products loaded` });
     } catch (e: any) {
@@ -369,38 +374,41 @@ const Products = ({ currentStoreId, stockData, onUpdateStock, onDeleteStock }: P
                 <div key={product.id} onClick={() => { setViewProduct(product); setViewDialogOpen(true); }}
                   className="rounded-xl border bg-card hover:shadow-lg hover:border-primary/30 transition-all cursor-pointer group overflow-hidden">
                   <div className={`h-1.5 w-full ${stockBarColor}`} />
-                  <div className="p-4 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                        <Package className="h-5 w-5 text-primary" />
-                      </div>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium shrink-0 ${status.color}`}>{status.label}</span>
+                  <div className="p-3 space-y-1.5">
+                    <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-muted/50">
+                      {product.productImage ? (
+                        <img src={product.productImage} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full items-center justify-center"><Package className="h-8 w-8 text-primary/45" /></div>
+                      )}
+                      <button type="button" title="Add or change image" onClick={(event) => { event.stopPropagation(); setImageEditorProduct(product); setImageEditorOpen(true); }} className="absolute bottom-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-background/90 text-primary shadow-sm transition hover:bg-primary hover:text-primary-foreground">
+                        <ImagePlus className="h-4 w-4" />
+                      </button>
+                      <span className="absolute left-2 top-2 rounded-full bg-background/85 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">{product.productImage ? "Image" : "Add image"}</span>
                     </div>
-                    <div>
-                      <p className="font-semibold text-sm leading-tight line-clamp-2">{product.productName}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{product.category}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold leading-tight">{product.productName}</p>
+                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{product.category || "Uncategorised"}</p>
+                      </div>
+                      <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-medium ${status.color}`}>{status.label}</span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div className="bg-muted/50 rounded-lg p-2">
-                        <p className="text-muted-foreground">Qty</p>
-                        <p className="font-bold text-base">{product.quantity}</p>
-                      </div>
-                      <div className="bg-muted/50 rounded-lg p-2">
-                        <p className="text-muted-foreground">Retail</p>
-                        <p className="font-bold text-sm">{(product.retail_price || 0).toLocaleString()}</p>
-                      </div>
-                    </div>
-                    {margin > 0 && (
-                      <div className="flex items-center gap-1 text-xs text-green-700 font-medium">
-                        <TrendingUp className="h-3 w-3" />{margin}% margin
-                      </div>
+                    {product.notes?.trim() && (
+                      <p className="truncate text-[10px] leading-4 text-muted-foreground">{product.notes}</p>
                     )}
-                    {product.barcode && (
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground font-mono truncate">
-                        <Barcode className="h-3 w-3 shrink-0" />{product.barcode}
-                      </div>
-                    )}
-                    <div className="flex gap-1 pt-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-between gap-2 border-t border-border/60 pt-1.5 text-[11px]">
+                      <span className="text-muted-foreground">Qty <strong className="text-foreground">{product.quantity}</strong></span>
+                      <span className="text-muted-foreground">Retail <strong className="text-foreground">{(product.retail_price || 0).toLocaleString()}</strong></span>
+                    </div>
+                    <div className="flex min-w-0 items-center justify-between gap-2 text-[10px]">
+                      {margin > 0 ? (
+                        <span className="flex items-center gap-1 font-medium text-green-700"><TrendingUp className="h-3 w-3" />{margin}% margin</span>
+                      ) : <span />}
+                      {product.barcode && (
+                        <span className="flex min-w-0 items-center gap-1 truncate font-mono text-muted-foreground"><Barcode className="h-3 w-3 shrink-0" />{product.barcode}</span>
+                      )}
+                    </div>
+                    <div className="flex gap-1 pt-0.5 opacity-0 transition-opacity group-hover:opacity-100" onClick={e => e.stopPropagation()}>
                       <Button variant="outline" size="sm" className="flex-1 h-7 text-xs" onClick={() => openEditDialog(product)}>
                         <Edit2 className="h-3 w-3 mr-1" />Edit
                       </Button>
@@ -538,6 +546,9 @@ const Products = ({ currentStoreId, stockData, onUpdateStock, onDeleteStock }: P
                       <Button className="flex-1" onClick={() => { openEditDialog(p); setViewDialogOpen(false); }}>
                         <Edit2 className="h-4 w-4 mr-2" />Edit Product
                       </Button>
+                      <Button variant="outline" onClick={() => { setPhoneImageProduct(p); setViewDialogOpen(false); }}>
+                        <Smartphone className="h-4 w-4 mr-2" />Phone image
+                      </Button>
                       <Button variant="outline" className="flex-1" onClick={() => handleOpenSachet(p)} disabled={sachets === 0}>
                         <RotateCw className="h-4 w-4 mr-2" />Open {pkg}
                       </Button>
@@ -580,6 +591,38 @@ const Products = ({ currentStoreId, stockData, onUpdateStock, onDeleteStock }: P
             <Button variant="outline" onClick={() => setDuplicateDialogOpen(false)}>Cancel</Button>
             <Button variant="destructive" onClick={() => void handleDeleteDuplicates()} disabled={!selectedDuplicateIds.size || deletingDuplicates} className="gap-2"><Trash2 className="h-4 w-4" />{deletingDuplicates ? "Deleting..." : `Confirm and delete (${selectedDuplicateIds.size})`}</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <EditProductDialog
+        open={imageEditorOpen}
+        onOpenChange={setImageEditorOpen}
+        product={imageEditorProduct}
+        initialTab="image"
+        onSave={(updated) => {
+          setProducts((current) => current.map((item) => item.id === updated.id ? updated : item));
+          if (viewProduct?.id === updated.id) setViewProduct(updated);
+          onUpdateStock?.(updated);
+        }}
+      />
+
+      <Dialog open={Boolean(phoneImageProduct)} onOpenChange={(open) => !open && setPhoneImageProduct(null)}>
+        <DialogContent className="max-w-sm text-center">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-center gap-2"><QrCode className="h-5 w-5 text-primary" />Open Zuri POS on phone</DialogTitle>
+            <DialogDescription>Scan this code, sign in, and the app will open the Products page on your phone.</DialogDescription>
+          </DialogHeader>
+          {phoneImageProduct && (() => {
+            const configuredOrigin = String(import.meta.env.VITE_PUBLIC_APP_URL || "").replace(/\/$/, "");
+            const mobileOrigin = configuredOrigin || window.location.origin;
+            const mobileUrl = `${mobileOrigin}/mobile?redirect=products`;
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(mobileUrl)}`;
+            return <div className="space-y-3">
+              <img src={qrUrl} alt="QR code for phone product image upload" className="mx-auto h-52 w-52 rounded-lg border bg-white p-2" />
+              <p className="break-all text-xs text-muted-foreground">{mobileUrl}</p>
+              <Button variant="outline" className="w-full" onClick={() => navigator.clipboard?.writeText(mobileUrl)}>Copy phone link</Button>
+            </div>;
+          })()}
         </DialogContent>
       </Dialog>
 

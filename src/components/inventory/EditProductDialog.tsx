@@ -19,6 +19,7 @@ interface EditProductDialogProps {
   product: StockItem | null;
   categories?: string[];
   onSave?: (updated: StockItem) => void;
+  initialTab?: "basic" | "pricing" | "stock" | "barcode" | "image";
 }
 
 export const EditProductDialog = ({
@@ -26,7 +27,8 @@ export const EditProductDialog = ({
   onOpenChange,
   product,
   categories = [],
-  onSave
+  onSave,
+  initialTab = "basic"
 }: EditProductDialogProps) => {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -206,7 +208,7 @@ export const EditProductDialog = ({
           </DialogTitle>
         </DialogHeader>
 
-        <Tabs defaultValue="basic" className="w-full">
+        <Tabs defaultValue={initialTab} className="w-full">
           <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="basic">Basic Info</TabsTrigger>
             <TabsTrigger value="stock">Stock</TabsTrigger>
@@ -610,7 +612,8 @@ export const EditProductDialog = ({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*"
+                accept="image/*"
+                capture="environment"
                   onChange={handleImageChange}
                   className="hidden"
                 />
