@@ -86,31 +86,33 @@ export const EditProductDialog = ({
   const uploadImage = async (): Promise<string | null> => {
     if (!imageFile || !product) return imagePreview || null;
 
-    try {
-      const fileExt = imageFile.name.split('.').pop();
-      const fileName = `product-${product.id}-${Date.now()}.${fileExt}`;
-      const filePath = `inventory/${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('pos-files')
-        .upload(filePath, imageFile, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      const { data } = supabase.storage
-        .from('pos-files')
-        .getPublicUrl(filePath);
-
-      return data.publicUrl;
-    } catch (error) {
-      console.error('Image upload error:', error);
-      toast({
-        title: 'Image Upload Failed',
-        description: 'Could not upload product image',
-        variant: 'destructive'
-      });
-      return null;
+    // Keep upload failures in the main save flow. Previously this function
+    // displayed an error, returned null, and allowed the product save to show
+    // a second, misleading success message.
+    if (!product.store_id) {
+      throw new Error('This product is missing its store assignment. Refresh Products and try again.');
     }
+    const fileExt = imageFile.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const fileName = `product-${product.id}-${Date.now()}.${fileExt}`;
+    const filePath = `${product.store_id}/product-images/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('pos-files')
+      .upload(filePath, imageFile, { upsert: false, contentType: imageFile.type || 'image/jpeg' });
+
+    if (uploadError) {
+      throw new Error(`Could not upload product image: ${uploadError.message}`);
+    }
+
+    const { data } = supabase.storage
+      .from('pos-files')
+      .getPublicUrl(filePath);
+
+    if (!data.publicUrl) {
+      throw new Error('The image uploaded, but no public image URL was returned.');
+    }
+
+    return data.publicUrl;
   };
 
   const handleSave = async () => {

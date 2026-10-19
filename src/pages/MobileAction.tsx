@@ -74,13 +74,27 @@ export default function MobileAction() {
       if (!storeId) throw new Error('No store specified');
       if (action.type === 'product_image') {
         if (!file) throw new Error('Choose or take a product image first');
-        const ext = file.name.split('.').pop() || 'jpg';
-        const path = `product-images/${action.product_id}-${Date.now()}.${ext}`;
-        const { error: uploadError } = await supabase.storage.from('pos-files').upload(path, file, { upsert: true });
+        if (!action.product_id) throw new Error('This product image link has expired. Generate a new QR code from Products.');
+        const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+        const path = `${storeId}/product-images/${action.product_id}-${Date.now()}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from('pos-files').upload(path, file, {
+          upsert: false,
+          contentType: file.type || 'image/jpeg',
+        });
         if (uploadError) throw uploadError;
         const { data: publicData } = supabase.storage.from('pos-files').getPublicUrl(path);
-        const { error: updateError } = await supabase.from('inventory').update({ product_image: publicData.publicUrl }).eq('id', action.product_id).eq('store_id', storeId);
+        if (!publicData.publicUrl) throw new Error('The image uploaded, but no image URL was returned.');
+        const { data: updatedProduct, error: updateError } = await supabase
+          .from('inventory')
+          .update({ product_image: publicData.publicUrl })
+          .eq('id', action.product_id)
+          .eq('store_id', storeId)
+          .select('id, product_image')
+          .maybeSingle();
         if (updateError) throw updateError;
+        if (!updatedProduct?.product_image) {
+          throw new Error('The image uploaded, but the product could not be updated. Check your access and try again.');
+        }
         toast({ title: 'Product image saved', description: 'The image is now available on the POS computer.' });
         setLoading(false);
         return;

@@ -615,7 +615,13 @@ const Products = ({ currentStoreId, stockData, onUpdateStock, onDeleteStock }: P
           {phoneImageProduct && (() => {
             const configuredOrigin = String(import.meta.env.VITE_PUBLIC_APP_URL || "").replace(/\/$/, "");
             const mobileOrigin = configuredOrigin || window.location.origin;
-            const mobileUrl = `${mobileOrigin}/mobile?redirect=products`;
+            const mobileParams = new URLSearchParams({
+              redirect: "products",
+              action: "product_image",
+              product_id: phoneImageProduct.id,
+              ...(phoneImageProduct.store_id || currentStoreId ? { store_id: phoneImageProduct.store_id || currentStoreId || "" } : {}),
+            });
+            const mobileUrl = `${mobileOrigin}/mobile?${mobileParams.toString()}`;
             const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(mobileUrl)}`;
             return <div className="space-y-3">
               <img src={qrUrl} alt="QR code for phone product image upload" className="mx-auto h-52 w-52 rounded-lg border bg-white p-2" />

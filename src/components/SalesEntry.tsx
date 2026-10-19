@@ -972,7 +972,9 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
       return;
     }
 
-    const cleanCode = code.trim();
+    // Camera scanners can include whitespace or separator characters around
+    // the value. Normalize those before checking local and remote inventory.
+    const cleanCode = code.trim().replace(/[^a-zA-Z0-9]/g, '');
 
     // First check local stock data
     let foundProduct = stockData.find(item =>
@@ -990,13 +992,16 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
           const storeId = currentStoreId || (await supabase.from("stores").select("id").eq("user_id", user.id).limit(1)).data?.[0]?.id;
 
           if (storeId) {
-            const { data: dbProduct, error } = await supabase
+            // Use an array with limit(1) instead of maybeSingle(). A duplicate
+            // barcode should not turn a normal scan into an error toast.
+            const { data: dbProducts, error } = await supabase
               .from('inventory')
               .select('*')
               .eq('store_id', storeId)
               .eq('barcode', cleanCode)
-              .limit(1)
-              .maybeSingle();
+              .limit(1);
+
+            const dbProduct = dbProducts?.[0];
 
             if (!error && dbProduct) {
               foundProduct = {
@@ -1023,7 +1028,10 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
           }
         }
       } catch (error) {
-        console.error("Error fetching product by barcode:", error);
+        // A failed lookup is handled like a miss below. Keep camera/permission
+        // errors separate, but do not expose database errors for an unknown
+        // barcode to the cashier.
+        console.warn("Barcode lookup unavailable:", error);
       }
     }
 
@@ -1048,8 +1056,8 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
     } else {
       toast({
         variant: "destructive",
-        title: "No Such Product",
-        description: `Product not found for barcode: ${cleanCode}`,
+        title: "Product not found",
+        description: `No product matches barcode ${cleanCode}. Check the barcode or add it in Products.`,
       });
     }
   };
