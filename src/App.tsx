@@ -241,11 +241,6 @@ const App = () => {
     const startTime = performance.now();
     
     // Immediate optimization checks
-    const isAggressiveCache = localStorage.getItem('pos_aggressive_cache') === 'true';
-    if (isAggressiveCache) {
-      console.log('Aggressive caching enabled');
-    }
-    
     // Defer heavy operations to avoid blocking UI
     setTimeout(() => {
       startupOptimizer.measureStartupPerformance();

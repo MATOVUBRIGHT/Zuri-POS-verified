@@ -178,16 +178,28 @@ const SupplierReports = ({ currentStoreId, onBack }: SupplierReportsProps) => {
     try {
       const [supplierResult, inventoryResult, salesResult, storeResult] = await Promise.all([
         supabase.from("suppliers").select("id, name, email, address, phone, company").eq("store_id", currentStoreId).order("name"),
-        supabase.from("inventory").select("*").eq("store_id", currentStoreId),
-        supabase.from("sales").select("*").eq("store_id", currentStoreId).order("date_of_sale", { ascending: false }),
+        // Reports only need supplier linkage, product name, cost, quantity and
+        // reorder thresholds. Avoid selecting large/optional inventory fields.
+        supabase.from("inventory").select("id, supplier_id, supplier_name, product_name, cost_per_unit, quantity, min_stock_level, reorder_quantity").eq("store_id", currentStoreId),
+        // Sales products are JSON; selecting the report fields keeps this page
+        // from downloading customer/payment columns and large audit payloads.
+        supabase.from("sales").select("id, date_of_sale, created_at, products").eq("store_id", currentStoreId).order("date_of_sale", { ascending: false }),
         supabase.from("stores").select("store_name").eq("id", currentStoreId).maybeSingle(),
       ]);
       if (supplierResult.error) throw supplierResult.error;
-      if (inventoryResult.error) throw inventoryResult.error;
-      if (salesResult.error) throw salesResult.error;
       setSuppliers((supplierResult.data || []) as Supplier[]);
-      setInventory((inventoryResult.data || []) as InventoryRow[]);
-      setSales(salesResult.data || []);
+      if (inventoryResult.error) {
+        setInventory([]);
+        toast({ title: "Supplier inventory is unavailable", description: "The report opened, but product cost and stock data could not be loaded.", variant: "destructive" });
+      } else {
+        setInventory((inventoryResult.data || []) as InventoryRow[]);
+      }
+      if (salesResult.error) {
+        setSales([]);
+        toast({ title: "Supplier sales are unavailable", description: "The report opened, but sales data could not be loaded.", variant: "destructive" });
+      } else {
+        setSales(salesResult.data || []);
+      }
       if (storeResult.data?.store_name) setTemplate(current => current.companyName === defaultTemplate.companyName ? { ...current, companyName: storeResult.data.store_name, rightBrand: storeResult.data.store_name } : current);
     } catch (error: any) { toast({ title: "Could not load supplier reports", description: error.message, variant: "destructive" }); }
     finally { setLoading(false); }

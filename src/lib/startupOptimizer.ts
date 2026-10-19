@@ -87,11 +87,14 @@ class StartupOptimizer {
       : this.startupTime;
     const loadTime = Math.max(0, Date.now() - navigationStart);
 
+    // Startup diagnostics are useful during development but add noise and
+    // work in production. Do not mutate cache policy based on one slow load.
+    if (!import.meta.env.DEV) return loadTime;
+
     if (loadTime > 2000) {
       console.warn(`Slow startup detected: ${loadTime}ms`);
       this.logPerformanceIssues();
-      // Auto-optimize for future loads
-      this.enableAggressiveCaching();
+      // Keep diagnostics read-only; cache policy is configured centrally.
     } else if (loadTime < 1000) {
       console.log(`Fast startup: ${loadTime}ms ⚡`);
     }
@@ -155,17 +158,17 @@ class StartupOptimizer {
     // Adjust cache size based on available memory
     if (memory && memory.jsHeapSizeLimit) {
       const availableMemory = memory.jsHeapSizeLimit / 1024 / 1024; // MB
-      if (availableMemory < 512) {
+      if (availableMemory < 512 && import.meta.env.DEV) {
         // Low memory device - reduce cache size
         console.log('Low memory device detected - reducing cache size');
-      } else if (availableMemory > 2048) {
+      } else if (availableMemory > 2048 && import.meta.env.DEV) {
         // High memory device - increase cache size
         console.log('High memory device detected - increasing cache size');
       }
     }
 
     // Adjust for slow connections
-    if (connection && (connection.effectiveType === 'slow-2g' || connection.effectiveType === '2g')) {
+    if (connection && (connection.effectiveType === 'slow-2g' || connection.effectiveType === '2g') && import.meta.env.DEV) {
       console.log('Slow connection detected - optimizing for offline-first');
       // Enable more aggressive caching
     }

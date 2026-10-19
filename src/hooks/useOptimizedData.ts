@@ -61,7 +61,7 @@ export function useOptimizedInventory(storeId: string | null, userId: string | n
                     return await dataSyncService.getDataWithLocalFirst(`inventory:${storeId}`, async () => {
                         const { data, error } = await supabase
                             .from('inventory')
-                            .select('*')
+                            .select('id, user_id, store_id, product_name, category, size, barcode, barcode_type, barcode_mode, quantity, cost_per_unit, total_value, retail_price, wholesale_price, date_of_purchase, sachets_count, loose_items, opened_sachets, items_per_sachet, min_stock_level, reorder_quantity, notes, packaging_type, unit_name, supplier, supplier_id, supplier_name, product_image, created_at')
                             .eq('store_id', storeId)
                             .order('created_at', { ascending: false })
                             .limit(5000); // Reduced limit for faster loading
@@ -80,7 +80,7 @@ export function useOptimizedInventory(storeId: string | null, userId: string | n
         staleTime: 1000 * 60 * 20,   // Increased to 20 min
         gcTime: 1000 * 60 * 60 * 48, // 48 hours cache retention
         placeholderData: keepPreviousData,
-        retry: 1, // Reduced retries for faster failures
+        retry: 0, // Do not repeat a broken schema/query during startup
         retryDelay: (attempt) => Math.min(200 * 2 ** attempt, 1000), // Much faster retries
         refetchOnMount: false,
         refetchOnWindowFocus: false,

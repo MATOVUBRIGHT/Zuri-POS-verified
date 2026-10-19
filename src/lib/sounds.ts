@@ -15,6 +15,11 @@ const getAudioContextClass = () => {
 const ensureAudioContext = (): AudioContext | null => {
   if (!hasUserGesture) return null;
   if (audioCtx) return audioCtx;
+  // A delayed async action can outlive the browser's user-activation window.
+  // Avoid constructing/resuming Web Audio in that case; it only produces a
+  // console warning and the sound is non-essential feedback.
+  const activation = typeof navigator !== "undefined" ? navigator.userActivation : undefined;
+  if (activation && !activation.isActive) return null;
 
   const AudioContextClass = getAudioContextClass();
   if (!AudioContextClass) return null;
