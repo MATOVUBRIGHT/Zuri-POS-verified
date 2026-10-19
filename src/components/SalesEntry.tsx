@@ -446,11 +446,12 @@ setSelectedPaymentAccountId(prev =>
   };
 
   // Optimized search with debouncing and memoization for better performance
+  // Memoized filtered stock with better dependency management
   const filteredStock = useMemo(() => {
     if (!debouncedSearchTerm.trim()) return [];
     
     const term = debouncedSearchTerm.toLowerCase();
-    return stockData
+    const filtered = stockData
       .filter(item => {
         return (
           item.productName.toLowerCase().includes(term) ||
@@ -469,7 +470,9 @@ setSelectedPaymentAccountId(prev =>
         return aName.localeCompare(bName);
       })
       .slice(0, 10); // Limit results for performance
-  }, [stockData, debouncedSearchTerm]);
+    
+    return filtered;
+  }, [stockData, debouncedSearchTerm]); // Fixed dependency array
 
   const reprintSales = useMemo(() => {
     const query = reprintSearch.trim().toLowerCase();
@@ -509,15 +512,15 @@ setSelectedPaymentAccountId(prev =>
     }
   }, [selectedIndex]);
 
-  const addProduct = useCallback(profile((stockItem: StockItem) => {
+  const addProduct = useCallback((stockItem: StockItem) => {
     const isWholesale = saleType === 'wholesale';
     const sellType = isWholesale ? 'sachet' : 'item';
     const existingIndex = products.findIndex(p => String(p.id) === String(stockItem.id) && p.sellType === sellType);
     const itemsPerSachet = stockItem.items_per_sachet || 1;
 
     // Units flagged as damaged are held for review and must not be sold, so the
-// sellable figure is quantity minus damaged_quantity.
-const totalQuantity = Math.max(0, (stockItem.quantity || 0) - (stockItem.damaged_quantity || 0));
+    // sellable figure is quantity minus damaged_quantity.
+    const totalQuantity = Math.max(0, (stockItem.quantity || 0) - (stockItem.damaged_quantity || 0));
     const maxQty = sellType === 'sachet'
       ? Math.floor(totalQuantity / itemsPerSachet)
       : totalQuantity;
@@ -559,11 +562,18 @@ const totalQuantity = Math.max(0, (stockItem.quantity || 0) - (stockItem.damaged
         return;
       }
 
-      const updatedProducts = [...products];
-      updatedProducts[existingIndex] = { ...existing, quantity: Math.min(existing.quantity + 1, maxQty) };
-      setProducts(updatedProducts);
+      // Use functional update to prevent stale closure issues
+      setProducts(prevProducts => {
+        const updatedProducts = [...prevProducts];
+        updatedProducts[existingIndex] = { 
+          ...updatedProducts[existingIndex], 
+          quantity: Math.min(updatedProducts[existingIndex].quantity + 1, maxQty) 
+        };
+        return updatedProducts;
+      });
     } else {
-      setProducts([{
+      // Add new product with functional update
+      setProducts(prevProducts => [{
         id: stockItem.id,
         productName: stockItem.productName,
         quantity: 1,
@@ -571,36 +581,43 @@ const totalQuantity = Math.max(0, (stockItem.quantity || 0) - (stockItem.damaged
         sellType,
         itemsPerSachet,
         items_per_sachet: itemsPerSachet
-      }, ...products]);
+      }, ...prevProducts]);
     }
 
     setSearchTerm('');
     setSelectedIndex(0);
-  }, 'addProduct'), [products, saleType, toast, profile]);
-  const updateProductQuantity = (productName: string, quantity: number, sellType: 'item' | 'sachet') => {
+  }, [saleType, toast]); // Removed products and profile from dependencies
+  const updateProductQuantity = useCallback((productName: string, quantity: number, sellType: 'item' | 'sachet') => {
     const stockItem = stockData.find(s => s.productName === productName);
     const itemsPerSachet = stockItem?.items_per_sachet || 1;
     const maxQuantity = sellType === 'sachet'
       ? Math.floor((stockItem?.quantity || 0) / itemsPerSachet)
       : stockItem?.quantity || 0;
-    setProducts(products.map(p =>
-      p.productName === productName && p.sellType === sellType
-        ? { ...p, quantity: Math.min(Math.max(1, quantity), maxQuantity) }
-        : p
-    ));
-  };
+    
+    setProducts(prevProducts => 
+      prevProducts.map(p =>
+        p.productName === productName && p.sellType === sellType
+          ? { ...p, quantity: Math.min(Math.max(1, quantity), maxQuantity) }
+          : p
+      )
+    );
+  }, [stockData]);
 
-  const updateProductPrice = (productName: string, price: number, sellType: 'item' | 'sachet') => {
-    setProducts(products.map(p =>
-      p.productName === productName && p.sellType === sellType
-        ? { ...p, sellingPrice: Math.max(0, price) }
-        : p
-    ));
-  };
+  const updateProductPrice = useCallback((productName: string, price: number, sellType: 'item' | 'sachet') => {
+    setProducts(prevProducts =>
+      prevProducts.map(p =>
+        p.productName === productName && p.sellType === sellType
+          ? { ...p, sellingPrice: Math.max(0, price) }
+          : p
+      )
+    );
+  }, []);
 
-  const removeProduct = (productName: string, sellType: 'item' | 'sachet') => {
-    setProducts(products.filter(p => !(p.productName === productName && p.sellType === sellType)));
-  };
+  const removeProduct = useCallback((productName: string, sellType: 'item' | 'sachet') => {
+    setProducts(prevProducts => 
+      prevProducts.filter(p => !(p.productName === productName && p.sellType === sellType))
+    );
+  }, []);
 
   const openReturnDialog = (sale: SaleItem) => {
     setReturnSale(sale);
@@ -1053,7 +1070,10 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
     printWindow.focus();
   };
 
-  const handleSubmit = useOptimizedCallback(async (e: React.FormEvent) => {
+  // This handler must see the current cart, payment, store and staff state.
+  // Memoizing it with [] captured the initial empty form and made checkout
+  // silently reject otherwise valid sales.
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (isSubmitting || submitLockRef.current) return;
@@ -1367,14 +1387,15 @@ const requiresPaymentDetails = isPaidSale && hasMethodRow && !isCashMethod;
       fetchSalesHistory();
       // Stay on new-sale tab — don't switch to history
 
-      // Force refetch all React Query caches so dashboard, reports, history all update instantly
-      await Promise.all([
-        queryClient.refetchQueries({ queryKey: ["sales"], type: 'all' }),
-        queryClient.refetchQueries({ queryKey: ["cash_transactions"], type: 'all' }),
-        queryClient.refetchQueries({ queryKey: ["inventory"], type: 'all' }),
-        queryClient.refetchQueries({ queryKey: ["customers"], type: 'all' }),
+      // Refresh dependent views in the background. Waiting for every page's
+      // query (and then invalidating the entire cache) made checkout feel
+      // frozen on stores with larger datasets.
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["sales", storeId] }),
+        queryClient.invalidateQueries({ queryKey: ["cash_transactions", storeId] }),
+        queryClient.invalidateQueries({ queryKey: ["inventory", storeId] }),
+        queryClient.invalidateQueries({ queryKey: ["customers", storeId] }),
       ]);
-      await queryClient.invalidateQueries();
 
       // Update customer totals after sale in the background (non-blocking for fast checkout).
       if (selectedCustomerId) {
@@ -1445,7 +1466,7 @@ const requiresPaymentDetails = isPaidSale && hasMethodRow && !isCashMethod;
       setIsSubmitting(false);
       submitLockRef.current = false;
     }
-  }, []); // Add dependency array for useOptimizedCallback
+  };
 
   const formatDateTime = (dateStr: string) => {
     return new Date(dateStr).toLocaleString('en-US', {

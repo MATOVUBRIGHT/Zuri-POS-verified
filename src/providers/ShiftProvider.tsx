@@ -7,6 +7,7 @@ import { useToast } from '@/hooks/use-toast';
 interface ShiftContextType {
   activeShift: Shift | null;
   loading: boolean;
+  isStable: boolean; // Track if authentication is stable to prevent blinking
   refreshShift: () => Promise<void>;
   startShift: (amount: number, staffId?: string) => Promise<Shift>;
   endShift: (actualCash: number) => Promise<{ actual: number; expected: number; discrepancy: number }>;
@@ -38,19 +39,40 @@ function clearShiftCache() {
 export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const cached = loadShiftCache();
   const [activeShift, setActiveShift] = useState<Shift | null>(cached?.activeShift ?? null);
-  const [loading, setLoading] = useState(false); // Start optimistic - don't block UI
+  const [loading, setLoading] = useState(!cached?.user); // Only show loading if no cached user
   const [user, setUser] = useState<import('@supabase/supabase-js').User | null>(cached?.user ?? null);
   const [store, setStore] = useState<Store | null>(cached?.store ?? null);
   const [isAdmin, setIsAdmin] = useState(cached?.isAdmin ?? false);
   const { toast } = useToast();
   const hasFetched = useRef(false);
+  const [isStable, setIsStable] = useState(!!cached?.user); // Track stability to prevent blinking
 
   const fetchInitialData = useCallback(async () => {
     try {
-      // Don't block the UI with loading state if we have cached data
-      if (!cached) setLoading(true);
+      // Only show loading if we don't have cached data and aren't stable yet
+      if (!cached && !isStable) setLoading(true);
       
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      // Handle invalid refresh token errors
+      if (sessionError) {
+        console.error("Session error:", sessionError);
+        if (sessionError.message.includes("refresh_token_not_found") || 
+            sessionError.message.includes("Refresh Token Not Found") ||
+            sessionError.message.includes("Invalid Refresh Token")) {
+          console.log("Clearing invalid session...");
+          await supabase.auth.signOut({ scope: 'local' });
+          setUser(null);
+          setActiveShift(null);
+          setStore(null);
+          setIsAdmin(false);
+          setIsStable(false);
+          clearShiftCache();
+          setLoading(false);
+          return;
+        }
+      }
+      
       const user = session?.user || null;
       setUser(user);
       
@@ -58,9 +80,14 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setActiveShift(null);
         setStore(null);
         setIsAdmin(false);
+        setIsStable(false);
         clearShiftCache();
+        setLoading(false);
         return;
       }
+      
+      // Mark as stable once we have a user
+      setIsStable(true);
 
       // Check if user is admin
       const { data: hasAdminRole } = await supabase.rpc('has_role', { _user_id: user.id, _role: 'admin' });
@@ -135,9 +162,8 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       hasFetched.current = true;
 
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!mounted) return;
-        
+        // fetchInitialData performs the single session read. Reading it here
+        // as well created competing auth-lock requests during startup/login.
         await fetchInitialData();
       } catch (error) {
         console.error("Error initializing auth:", error);
@@ -154,13 +180,19 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // Only refetch on explicit sign in/out, not on initial load
       if (event === 'SIGNED_IN') {
         hasFetched.current = false; // Allow refetch on new login
-        fetchInitialData();
+        setIsStable(false); // Mark as unstable during transition
+        // Supabase invokes listeners while its auth lock is held. Defer the
+        // data queries until that callback has returned.
+        setTimeout(() => {
+          if (mounted) void fetchInitialData();
+        }, 0);
       } else if (event === 'SIGNED_OUT') {
         hasFetched.current = false;
         setUser(null);
         setActiveShift(null);
         setStore(null);
         setIsAdmin(false);
+        setIsStable(false);
         setLoading(false);
         clearShiftCache();
       }
@@ -252,7 +284,7 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   return (
-    <ShiftContext.Provider value={{ activeShift, loading, refreshShift, startShift, endShift, setActiveShift, user, store, isAdmin }}>
+    <ShiftContext.Provider value={{ activeShift, loading, isStable, refreshShift, startShift, endShift, setActiveShift, user, store, isAdmin }}>
       {children}
     </ShiftContext.Provider>
   );

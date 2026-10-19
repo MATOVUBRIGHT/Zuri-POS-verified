@@ -61,6 +61,7 @@ import {
   applyDeletions,
   avatarTone,
   buildConversations,
+  createDraftConversation,
   dayLabel,
   initials,
   isFromMe,
@@ -72,9 +73,11 @@ import {
   type ChatDeletion,
   type ChatMessage,
   type Conversation,
+  type PeerKey,
 } from "@/lib/chat";
 
 type Branch = { id: string; store_name: string };
+type ExecContact = { id: string; display_name: string; role: string };
 type BranchRow = {
   id: string;
   sender_id: string;
@@ -107,12 +110,14 @@ export default function StoreChat({
     selectedStoreId || null,
   );
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [execContacts, setExecContacts] = useState<ExecContact[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [deletions, setDeletions] = useState<ChatDeletion[]>([]);
   const [target, setTarget] = useState("");
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(false);
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [draftPeerKey, setDraftPeerKey] = useState<PeerKey | null>(null);
   const [composing, setComposing] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
   const knownMessageIds = useRef(new Set<string>());
@@ -158,16 +163,22 @@ export default function StoreChat({
       .eq("user_id", user.id);
     setDeletions((del || []) as ChatDeletion[]);
 
-    const { data, error } = await (supabase as any)
-      .from("branch_messages")
-      .select("*")
-      .or(
-        `recipient_store_id.eq.${preferred},sender_store_id.eq.${preferred}`,
-      )
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (!error) {
-      const next = ((data || []) as BranchRow[]).map((row): ChatMessage => ({
+    const [{ data: branchRows, error: branchError }, { data: executiveRows, error: executiveError }] = await Promise.all([
+      (supabase as any)
+        .from("branch_messages")
+        .select("*")
+        .or(`recipient_store_id.eq.${preferred},sender_store_id.eq.${preferred}`)
+        .order("created_at", { ascending: false })
+        .limit(200),
+      (supabase as any)
+        .from("executive_messages")
+        .select("*")
+        .or(`recipient_store_id.eq.${preferred},sender_store_id.eq.${preferred},recipient_user_id.eq.${user.id}`)
+        .order("created_at", { ascending: false })
+        .limit(200),
+    ]);
+    if (!branchError || !executiveError) {
+      const branchMessages = !branchError ? ((branchRows || []) as BranchRow[]).map((row): ChatMessage => ({
         id: row.id,
         senderUserId: row.sender_id,
         senderStoreId: row.sender_store_id,
@@ -176,9 +187,42 @@ export default function StoreChat({
         message: row.message,
         readAt: row.read_at,
         createdAt: row.created_at,
-      }));
+      })) : [];
+      const executiveMessages = !executiveError ? (executiveRows || []).map((row: any): ChatMessage => ({
+        id: row.id,
+        senderUserId: row.sender_user_id,
+        senderStoreId: row.sender_store_id,
+        recipientUserId: row.recipient_user_id,
+        recipientStoreId: row.recipient_store_id,
+        message: row.message,
+        readAt: row.read_at,
+        createdAt: row.created_at,
+      })) : [];
+      const next = [...branchMessages, ...executiveMessages]
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
       next.forEach((m) => knownMessageIds.current.add(m.id));
       setMessages(next);
+    }
+
+    const [{ data: accessContacts }, { data: owner }] = await Promise.all([
+      (supabase as any).from("store_access").select("user_id, role").eq("store_id", preferred)
+        .in("role", ["owner", "boss", "accountant", "admin"]),
+      (supabase as any).from("stores").select("user_id").eq("id", preferred).maybeSingle(),
+    ]);
+    const contactIds = Array.from(new Set([
+      ...(accessContacts || []).map((row: any) => row.user_id),
+      owner?.user_id,
+    ].filter((id): id is string => Boolean(id && id !== user.id))));
+    if (contactIds.length) {
+      const { data: profiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", contactIds);
+      const roleById = new Map((accessContacts || []).map((row: any) => [row.user_id, row.role]));
+      setExecContacts((profiles || []).map((profile: any) => ({
+        id: profile.user_id,
+        display_name: profile.full_name || roleById.get(profile.user_id) || "Executive",
+        role: String(roleById.get(profile.user_id) || "Executive"),
+      })));
+    } else {
+      setExecContacts([]);
     }
   }, [contextStoreId, selectedStoreId]);
 
@@ -223,8 +267,32 @@ export default function StoreChat({
         () => void load(),
       )
       .subscribe();
+    const executiveChannel = supabase
+      .channel(`executive-messages-${contextStoreId}-${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "executive_messages",
+          filter: `recipient_store_id=eq.${contextStoreId}`,
+        },
+        () => void load(),
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "executive_messages",
+          filter: `sender_store_id=eq.${contextStoreId}`,
+        },
+        () => void load(),
+      )
+      .subscribe();
     return () => {
       void supabase.removeChannel(channel);
+      void supabase.removeChannel(executiveChannel);
     };
   }, [contextStoreId, load, toast, userId]);
 
@@ -236,11 +304,11 @@ export default function StoreChat({
       // Only the inbox branch counts as "mine", so every other branch resolves
       // as the counterpart for that thread.
       myStoreIds: new Set(contextStoreId ? [contextStoreId] : []),
-      nameForUser: () => "Colleague",
+      nameForUser: (id) => execContacts.find((contact) => contact.id === id)?.display_name || "Executive",
       nameForStore: (id) =>
         branches.find((branch) => branch.id === id)?.store_name || "Assigned branch",
     }),
-    [userId, contextStoreId, branches],
+    [userId, contextStoreId, branches, execContacts],
   );
 
   const allConversations = useMemo(
@@ -254,8 +322,14 @@ export default function StoreChat({
   );
 
   const active = useMemo(
-    () => conversations.find((c) => c.key === activeKey) || null,
-    [conversations, activeKey],
+    () => {
+      const existing = conversations.find((c) => c.key === activeKey);
+      if (existing) return existing;
+      if (!draftPeerKey) return null;
+      const [scope, peerId] = draftPeerKey.split(":", 2) as ["user" | "store", string];
+      return createDraftConversation(draftPeerKey, scope === "user" ? ctx.nameForUser(peerId) : branchName(peerId));
+    },
+    [conversations, activeKey, draftPeerKey, branches, ctx],
   );
 
   const recipients = useMemo(
@@ -271,6 +345,8 @@ export default function StoreChat({
     [recipients, target],
   );
 
+  const canSend = Boolean(active && (active.scope === "user" || targets.length));
+
   const unreadCount = useMemo(
     () => conversations.reduce((sum, c) => sum + c.unread, 0),
     [conversations],
@@ -285,8 +361,9 @@ export default function StoreChat({
         .map((m) => m.id);
       if (!unread.length) return;
       const stamp = new Date().toISOString();
+      const table = conversation.scope === "user" ? "executive_messages" : "branch_messages";
       const { error } = await (supabase as any)
-        .from("branch_messages")
+        .from(table)
         .update({ read_at: stamp })
         .in("id", unread);
       if (error) {
@@ -317,7 +394,24 @@ export default function StoreChat({
   /* ── actions ──────────────────────────────────────────────────────────── */
 
   const send = async () => {
-    if (!draft.trim() || !userId || !contextStoreId || !targets.length) return;
+    if (!draft.trim() || !userId || !contextStoreId || !active) return;
+    if (active.scope === "user") {
+      const { error } = await (supabase as any).from("executive_messages").insert({
+        sender_user_id: userId,
+        sender_store_id: contextStoreId,
+        recipient_user_id: active.peerId,
+        message: draft.trim(),
+      });
+      if (error) {
+        toast({ title: "Message not sent", description: error.message, variant: "destructive" });
+        return;
+      }
+      setDraft("");
+      toast({ title: "Message sent", description: `Sent to ${active.name}.` });
+      void load();
+      return;
+    }
+    if (!targets.length) return;
     const { error } = await (supabase as any)
       .from("branch_messages")
       .insert(
@@ -372,6 +466,7 @@ export default function StoreChat({
       { scope: target_.scope, peer_id: target_.peerId, deleted_at: new Date().toISOString() },
     ]);
     setActiveKey((current) => (current === target_.key ? null : current));
+    setDraftPeerKey((current) => (current === target_.key ? null : current));
     toast({
       title: "Chat deleted",
       description: `This conversation with ${target_.name} is hidden for you.`,
@@ -381,6 +476,7 @@ export default function StoreChat({
   const switchInbox = (value: string) => {
     setContextStoreId(value);
     setActiveKey(null);
+    setDraftPeerKey(null);
     setComposing(false);
     setTarget("");
   };
@@ -439,7 +535,7 @@ export default function StoreChat({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setActiveKey(null)}
+              onClick={() => { setActiveKey(null); setDraftPeerKey(null); }}
               title="Back to chats"
             >
               <ArrowLeft className="h-5 w-5" />
@@ -477,7 +573,7 @@ export default function StoreChat({
               variant="ghost"
               size="icon"
               title="New chat"
-              onClick={() => setComposing(true)}
+                onClick={() => { setDraftPeerKey(null); setComposing(true); }}
               disabled={!recipients.length}
             >
               <Plus className="h-5 w-5" />
@@ -509,19 +605,21 @@ export default function StoreChat({
         )}
 
         {/* New-chat picker */}
-        {composing && !active && recipients.length > 0 && (
+        {composing && !active && (recipients.length > 0 || execContacts.length > 0) && (
           <div className="border-b bg-muted/40 p-4">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Start a conversation
             </p>
             <Select
               onValueChange={(value) => {
+                setDraftPeerKey(value as PeerKey);
                 setActiveKey(value);
+                setTarget(value.split(":", 2)[1]);
                 setComposing(false);
               }}
             >
               <SelectTrigger className="mt-2 bg-background">
-                <SelectValue placeholder="Choose a branch…" />
+                <SelectValue placeholder="Choose a branch or executive…" />
               </SelectTrigger>
               <SelectContent>
                 {recipients.map((branch) => (
@@ -529,6 +627,16 @@ export default function StoreChat({
                     {branch.store_name}
                   </SelectItem>
                 ))}
+                {execContacts.length > 0 && (
+                  <>
+                    <div className="px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground">Executives & accountants</div>
+                    {execContacts.map((contact) => (
+                      <SelectItem key={contact.id} value={peerKey("user", contact.id)}>
+                        {contact.display_name} · {contact.role}
+                      </SelectItem>
+                    ))}
+                  </>
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -606,7 +714,7 @@ export default function StoreChat({
 
             {/* Composer — recipient defaults to the open thread */}
             <div className="border-t p-3">
-              {recipients.length > 1 && (
+              {active.scope === "store" && recipients.length > 1 && (
                 <div className="mb-2 flex items-center gap-2">
                   <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     To
@@ -655,7 +763,7 @@ export default function StoreChat({
                   size="icon"
                   className="shrink-0 rounded-full"
                   onClick={() => void send()}
-                  disabled={!draft.trim() || !targets.length}
+                  disabled={!draft.trim() || !canSend}
                   title="Send"
                 >
                   <Send className="h-4 w-4" />
@@ -693,7 +801,7 @@ export default function StoreChat({
                     >
                       <button
                         type="button"
-                        onClick={() => setActiveKey(conversation.key)}
+                        onClick={() => { setDraftPeerKey(null); setActiveKey(conversation.key); }}
                         className="flex min-w-0 flex-1 items-center gap-3 text-left"
                       >
                         <span

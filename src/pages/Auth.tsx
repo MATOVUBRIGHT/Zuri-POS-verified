@@ -35,6 +35,7 @@ const Auth = () => {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isAuthenticating, setIsAuthenticating] = useState(false); // Track authentication flow
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [showPassword, setShowPassword] = useState(false);
@@ -44,9 +45,9 @@ const Auth = () => {
   useEffect(() => {
     let mounted = true;
     let redirectStarted = false;
-
+    
     const redirectAfterSignIn = () => {
-      if (redirectStarted) return;
+      if (redirectStarted || !mounted) return;
       redirectStarted = true;
       try {
         const redirect = localStorage.getItem('post_auth_redirect');
@@ -61,28 +62,43 @@ const Auth = () => {
       navigate("/", { replace: true });
     };
     
-    // Set up auth state listener first
+    // Set up auth state listener - but make it stable
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
-      if (event === 'SIGNED_IN' && session) {
-        redirectAfterSignIn();
+      
+      // Only redirect on successful sign in, avoid multiple redirects
+      if (event === 'SIGNED_IN' && session && !redirectStarted) {
+        // Clear authenticating state and add a small delay to prevent visual flickering
+        setIsAuthenticating(false);
+        setTimeout(() => {
+          if (mounted) redirectAfterSignIn();
+        }, 100);
+      } else if (event === 'SIGNED_OUT') {
+        setIsAuthenticating(false);
       }
     });
 
-    // Then check for existing session
-    void supabase.auth.getSession()
+    // Check for existing session once with better error handling
+    supabase.auth.getSession()
       .then(({ data: { session }, error }) => {
         if (!mounted) return;
         if (error) {
           console.error("Auth session check error:", error);
-          if (error.message.includes("refresh_token_not_found") || error.message.includes("Refresh Token Not Found")) {
-            void supabase.auth.signOut().catch((signOutError) => {
+          // Clear invalid tokens to prevent repeated errors
+          if (error.message.includes("refresh_token_not_found") || 
+              error.message.includes("Refresh Token Not Found") ||
+              error.message.includes("Invalid Refresh Token")) {
+            console.log("Clearing invalid auth session...");
+            void supabase.auth.signOut({ scope: 'local' }).catch((signOutError) => {
               console.error("Could not clear invalid auth session:", signOutError);
             });
           }
           return;
         }
-        if (session) redirectAfterSignIn();
+        if (session && !redirectStarted) {
+          // Immediate redirect for existing sessions
+          redirectAfterSignIn();
+        }
       })
       .catch((error: unknown) => {
         if (!mounted) return;
@@ -118,6 +134,7 @@ const Auth = () => {
     }
     
     setLoading(true);
+    setIsAuthenticating(true);
     try {
       const { error } = await supabase.auth.signInWithPassword({
         email: result.data.email,
@@ -125,12 +142,14 @@ const Auth = () => {
       });
 
       if (error) {
+        setIsAuthenticating(false);
         toast({
           variant: "destructive",
           title: "Login failed",
           description: error.message,
         });
       } else {
+        // Keep authenticating state until redirect happens
         toast({
           title: "Welcome back!",
           description: "Successfully logged in.",
@@ -138,6 +157,7 @@ const Auth = () => {
       }
     } catch (error) {
       console.error("Login request failed:", error);
+      setIsAuthenticating(false);
       toast({
         variant: "destructive",
         title: "Login failed",
@@ -352,7 +372,7 @@ const Auth = () => {
   );
 
   return (
-    <div className="min-h-screen flex items-center justify-end p-4 md:p-12 relative overflow-hidden">
+    <div className="auth-page min-h-screen flex items-center justify-end p-4 md:p-12 relative overflow-hidden bg-slate-50">
       {/* Background Image - using img for faster loading with fetchpriority */}
       <img
         src={authBg}
@@ -434,9 +454,9 @@ const Auth = () => {
                 <Button
                   type="submit"
                   className="w-full"
-                  disabled={loading}
+                  disabled={loading || isAuthenticating}
                 >
-                  {loading ? "Logging in..." : "Login"}
+                  {isAuthenticating ? "Signing you in..." : loading ? "Logging in..." : "Login"}
                 </Button>
                 <Button type="button" variant="outline" className="w-full" onClick={() => navigate("/branch-login")}>
                   Branch POS sign in <ArrowRight className="ml-2 h-4 w-4" />

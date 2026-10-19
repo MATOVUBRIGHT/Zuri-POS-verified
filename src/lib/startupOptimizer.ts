@@ -4,7 +4,7 @@ import { optimizedCache } from './optimizedCache';
 class StartupOptimizer {
   private criticalDataKeys: string[] = [];
   private startupTime = typeof window !== 'undefined' && 'performance' in window
-    ? (window.performance.timing?.navigationStart ?? Date.now())
+    ? (window.performance.timeOrigin ?? Date.now())
     : Date.now();
 
   // Track critical data that should be available instantly
@@ -83,14 +83,16 @@ class StartupOptimizer {
   // Measure and log performance metrics
   measureStartupPerformance() {
     const navigationStart = typeof window !== 'undefined' && 'performance' in window
-      ? (window.performance.timing?.navigationStart ?? this.startupTime)
+      ? (window.performance.timeOrigin ?? this.startupTime)
       : this.startupTime;
     const loadTime = Math.max(0, Date.now() - navigationStart);
 
-    if (loadTime > 3000) {
+    if (loadTime > 2000) {
       console.warn(`Slow startup detected: ${loadTime}ms`);
       this.logPerformanceIssues();
-    } else if (loadTime < 1500) {
+      // Auto-optimize for future loads
+      this.enableAggressiveCaching();
+    } else if (loadTime < 1000) {
       console.log(`Fast startup: ${loadTime}ms ⚡`);
     }
 
@@ -100,6 +102,16 @@ class StartupOptimizer {
     }
 
     return loadTime;
+  }
+
+  private enableAggressiveCaching() {
+    try {
+      // Set flag for aggressive caching on next load
+      localStorage.setItem('pos_aggressive_cache', 'true');
+      console.log('Enabled aggressive caching for next session');
+    } catch (e) {
+      // Ignore localStorage errors
+    }
   }
 
   private logPerformanceIssues() {

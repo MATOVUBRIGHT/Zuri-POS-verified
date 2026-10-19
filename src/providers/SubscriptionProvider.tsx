@@ -40,7 +40,7 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode; userId?
 }) => {
   const [subscription, setSubscription] = useState<SubscriptionContextType['subscription']>(null);
   const [paymentRef, setPaymentRef] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start optimistic - don't block on subscription load
   const [previousStatus, setPreviousStatus] = useState<string | null>(null);
   const [trialWarningShown, setTrialWarningShown] = useState(false);
   const { toast } = useToast();
@@ -53,6 +53,9 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode; userId?
 
   const fetchSubscription = useCallback(async (id: string) => {
     try {
+      // Only show loading on first fetch or when we have no subscription data
+      if (!subscription && !hasFetched.current) setLoading(true);
+      
       const { data, error } = await supabase
         .from('user_subscriptions')
         .select('id, status, expires_at, payment_reference')
@@ -87,7 +90,7 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode; userId?
     } finally {
       setLoading(false);
     }
-  }, [previousStatus, toast]);
+  }, [subscription, toast]);
 
   // Subscribe to real-time changes
   const setupRealtimeListener = useCallback((id: string) => {

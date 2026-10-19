@@ -160,22 +160,12 @@ setReturns((rows || []).map((record: any) => mapReturnRecord(record)));
   const fetchDamagedReview = async () => {
     if (!currentStoreId) { setDamagedReview([]); return; }
     try {
-      const res = await (supabase.from("inventory" as any)
-        .select("id, product_name, quantity, damaged_quantity, damaged_at, damaged_reason, cost_per_unit, store_id, category")
-        .eq("store_id", currentStoreId)
-        .gt("damaged_quantity", 0)
-        .order("damaged_at", { ascending: false }) as any);
-
-      // The damaged_* columns arrive with migration 20260926100000. Until it is
-      // applied the select fails, so fall back to the local stock list to keep
-      // the page usable instead of blanking it.
-      if (res.error) {
-        const local = stockData.filter(s => (s.damaged_quantity || 0) > 0);
-        setDamagedReview(local);
-        return;
-      }
-
-      setDamagedReview(((res.data || []) as any[]).map((r: any) => ({
+      // Use the already-loaded inventory snapshot. This avoids a noisy 400 on
+      // deployments where the optional damaged-stock migration is not applied.
+      const local = stockData.filter(s =>
+        (s.store_id === currentStoreId || !s.store_id) && (s.damaged_quantity || 0) > 0
+      );
+      setDamagedReview(local.map((r: any) => ({
         id: r.id,
         productName: r.product_name,
         category: r.category,

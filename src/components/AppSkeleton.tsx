@@ -64,7 +64,7 @@ export function QuickAppSkeleton() {
     <div className="fixed inset-0 z-50 grid place-items-center bg-background">
       <div className="text-center space-y-4">
         <div className="relative mx-auto">
-          <div className="loader zuri-loader" style={{ "--size": "1px" } as React.CSSProperties}></div>
+          <div className="loader zuri-loader" style={{ "--size": "0.75px" } as React.CSSProperties}></div>
         </div>
         <p className="text-lg font-medium text-slate-700">Starting POS System</p>
         <p className="text-sm text-slate-500">Initializing your workspace...</p>

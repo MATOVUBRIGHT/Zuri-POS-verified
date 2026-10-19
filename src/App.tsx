@@ -36,6 +36,30 @@ const MobileAction = lazy(() => import("./pages/MobileAction"));
 // Temporary demo component for the new loader
 const LoaderDemo = lazy(() => import("./components/LoaderDemo").then(m => ({ default: m.LoaderDemo })));
 
+const enterMovesToNextInput = (event: KeyboardEvent) => {
+  if (event.key !== "Enter" || event.defaultPrevented) return;
+
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (["hidden", "button", "submit", "reset", "checkbox", "radio", "file", "range"].includes(target.type)) return;
+
+  const form = target.form;
+  if (!form) return;
+
+  const fields = Array.from(form.querySelectorAll<HTMLInputElement>(
+    'input:not([disabled]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"])'
+  )).filter((field) => field.offsetParent !== null);
+  const currentIndex = fields.indexOf(target);
+  const nextField = fields[currentIndex + 1];
+
+  // Let the browser submit when this is the last input in the form.
+  if (!nextField) return;
+
+  event.preventDefault();
+  nextField.focus();
+  nextField.select?.();
+};
+
 // Configure React Query for optimal performance
 const isNonRetryable = (error: any) => {
   const status = Number(error?.status || error?.cause?.status || 0);
@@ -52,16 +76,17 @@ const isNonRetryable = (error: any) => {
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000 * 60 * 60 * 2,   // 2 hours - keep data fresh even longer
-      gcTime: 1000 * 60 * 60 * 48,     // 48 hours - extended cache retention
+      staleTime: 1000 * 60 * 60 * 4,   // 4 hours - even longer staleness for better performance
+      gcTime: 1000 * 60 * 60 * 72,     // 72 hours - extended cache retention
       refetchOnWindowFocus: false,     // Never refetch on focus
       refetchOnReconnect: false,       // Only manual refetch or mutation invalidation
       refetchOnMount: false,           // Always use cache first
+      refetchInterval: false,          // Disable automatic refetching
       retry: (failureCount, error) => {
         if (isNonRetryable(error)) return false;
-        return failureCount < 2; // Reduce retries for faster failures
+        return failureCount < 1; // Reduce retries for faster failures
       },
-      retryDelay: (attemptIndex) => Math.min(500 * 2 ** attemptIndex, 15000), // Faster retry delays
+      retryDelay: (attemptIndex) => Math.min(300 * 2 ** attemptIndex, 10000), // Faster retry delays
       networkMode: 'offlineFirst',     // Prioritize cache over network
     },
     mutations: {
@@ -69,6 +94,7 @@ const queryClient = new QueryClient({
         if (isNonRetryable(error)) return false;
         return failureCount < 1; // Single retry only for mutations
       },
+      networkMode: 'offlineFirst',     // Prioritize cache for mutations too
     },
   },
 });
@@ -86,14 +112,12 @@ const AppWithSubscription = ({ children }: { children: React.ReactNode }) => {
 
 // Guard component - enforces login + active subscription (admins bypass)
 const SubscriptionGuard = ({ children }: { children: React.ReactNode }) => {
-  const { loading: shiftLoading, user, isAdmin } = useShift();
+  const { loading: shiftLoading, user, isAdmin, isStable } = useShift();
   const { subscription, loading: subLoading } = useSubscription();
   const location = useLocation();
 
-  // Only block render if we have NO cached user at all (first ever load)
-  // If we have a user from cache, render immediately and let background refresh happen silently
-  const isHardLoading = (shiftLoading && !user) || (subLoading && !subscription && !user);
-  if (isHardLoading) return <QuickAppSkeleton />;
+  // Only show loading if we're not stable yet (prevents blinking during auth)
+  if (!isStable && shiftLoading && !user) return <QuickAppSkeleton />;
 
   if (!user) {
     return <Navigate to="/auth" state={{ from: location }} replace />;
@@ -111,10 +135,11 @@ const SubscriptionGuard = ({ children }: { children: React.ReactNode }) => {
 
 // Guard component - enforces login using centralized useShift hook
 const AuthShiftGuard = ({ children }: { children: React.ReactNode }) => {
-  const { loading: shiftLoading, user } = useShift();
+  const { loading: shiftLoading, user, isStable } = useShift();
   const location = useLocation();
 
-  if (shiftLoading && !user) return <QuickAppSkeleton />;
+  // Only show loading if we're not stable yet (prevents blinking)
+  if (!isStable && shiftLoading && !user) return <QuickAppSkeleton />;
 
   if (!user) {
     return <Navigate to="/auth" state={{ from: location }} replace />;
@@ -209,12 +234,29 @@ const App = () => {
 
   useEffect(() => {
     // Start performance monitoring and optimization
-    startupOptimizer.measureStartupPerformance();
-
-    // Monitor memory and performance
-    if (process.env.NODE_ENV === 'development') {
-      console.log('POS App loaded in:', Date.now() - (window.performance?.timing?.navigationStart || 0), 'ms');
+    const startTime = performance.now();
+    
+    // Immediate optimization checks
+    const isAggressiveCache = localStorage.getItem('pos_aggressive_cache') === 'true';
+    if (isAggressiveCache) {
+      console.log('Aggressive caching enabled');
     }
+    
+    // Defer heavy operations to avoid blocking UI
+    setTimeout(() => {
+      startupOptimizer.measureStartupPerformance();
+    }, 0);
+
+    // Monitor memory and performance in dev mode only
+    if (process.env.NODE_ENV === 'development') {
+      const loadTime = Math.max(0, Date.now() - (window.performance?.timeOrigin || Date.now()));
+      console.log('POS App loaded in:', Math.round(loadTime), 'ms');
+    }
+  }, []);
+
+  useEffect(() => {
+    document.addEventListener("keydown", enterMovesToNextInput, true);
+    return () => document.removeEventListener("keydown", enterMovesToNextInput, true);
   }, []);
 
   // Global unhandled rejection handler to prevent white screens from async errors

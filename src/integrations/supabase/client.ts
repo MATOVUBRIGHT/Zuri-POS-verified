@@ -29,6 +29,17 @@ const offlineAwareFetch: typeof fetch = async (input, init) => {
   return globalThis.fetch(input, init);
 };
 
+// Queue auth operations in this tab. Several panels read auth state together;
+// the browser Web Lock can otherwise be stolen after 5 seconds.
+let authLockTail = Promise.resolve();
+const queuedAuthLock = async <T>(_name: string, _timeout: number, fn: () => Promise<T>): Promise<T> => {
+  const previous = authLockTail;
+  let release!: () => void;
+  authLockTail = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try { return await fn(); } finally { release(); }
+};
+
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
@@ -37,6 +48,7 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
     storage: localStorage,
     persistSession: true,
     autoRefreshToken: true,
+    lock: queuedAuthLock,
   },
   global: {
     fetch: offlineAwareFetch,

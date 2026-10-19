@@ -41,6 +41,33 @@ export type Conversation = {
   messages: ChatMessage[];
 };
 
+/** A selectable recipient can have no rows yet; keep a real empty thread so the composer can send the first message. */
+export function createDraftConversation(
+  key: PeerKey,
+  name: string,
+): Conversation {
+  const [scope, peerId] = key.split(":", 2) as [PeerScope, string];
+  return {
+    key,
+    scope,
+    peerId,
+    name,
+    lastMessage: {
+      id: `draft-${key}`,
+      senderUserId: null,
+      senderStoreId: null,
+      recipientUserId: scope === "user" ? peerId : null,
+      recipientStoreId: scope === "store" ? peerId : null,
+      message: "",
+      readAt: null,
+      createdAt: new Date(0).toISOString(),
+    },
+    lastAt: new Date(0).toISOString(),
+    unread: 0,
+    messages: [],
+  };
+}
+
 export type ChatDeletion = {
   scope: string;
   peer_id: string;

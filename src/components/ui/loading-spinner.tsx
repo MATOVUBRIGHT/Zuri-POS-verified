@@ -2,10 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 
-// Anchors the loader to mount, so a page always shows one on open instead of
-// appearing pre-loaded with no feedback. It stays up while `isLoading` is true
-// and otherwise holds for at least `minMs`, so a cache hit reads as a
-// deliberate load rather than a one-frame flash.
+// Keeps short-lived loads visible long enough to avoid a one-frame flash.
 export function useMinimumLoading(isLoading: boolean, minMs = 350): boolean {
   const mountedAt = useRef<number>(Date.now());
   const [show, setShow] = useState(true);
@@ -36,10 +33,10 @@ interface LoadingSpinnerProps {
 // The mark scales entirely off --size (32 x --size across), so each preset is
 // just a different value for it - reduced from 48x for better balance
 const markScale = {
-  sm: "0.3px",
-  md: "0.45px", 
-  lg: "0.65px",
-  xl: "0.85px",
+  sm: "0.25px",
+  md: "0.38px", 
+  lg: "0.55px",
+  xl: "0.72px",
 } as const;
 
 export function LoadingMark({ 
@@ -79,15 +76,14 @@ export function LoadingSpinner({
 }: LoadingSpinnerProps) {
   const content = (
     <div className={cn(
-      "relative w-full",
+      "flex w-full flex-col items-center justify-center",
       fullScreen 
-        ? "fixed inset-0 bg-slate-50 text-slate-900 z-50" 
-        : "min-h-[200px]",
+        ? "fixed inset-0 z-50 bg-slate-50 text-slate-900" 
+        : "min-h-[60vh]",
       className
     )}>
-      {/* Loader positioned absolutely at center */}
       <div
-        className="absolute inset-0 flex flex-col items-center justify-center gap-4"
+        className="flex flex-col items-center justify-center gap-4"
         style={{
           "--size": markScale[size],
           ...(color1 ? { "--c1": color1 } : {}),
@@ -120,12 +116,12 @@ export function PageLoader({
   return (
     <div
       className={cn(
-        "relative min-h-[60vh] w-full bg-slate-50 text-slate-900",
+        "flex min-h-[60vh] w-full flex-col items-center justify-center bg-slate-50 text-slate-900",
         className
       )}
     >
       <div
-        className="absolute inset-0 flex flex-col items-center justify-center gap-4"
+        className="flex flex-col items-center justify-center gap-4"
         style={{
           "--size": markScale.lg,
           ...(color1 ? { "--c1": color1 } : {}),

@@ -67,6 +67,7 @@ import {
   applyDeletions,
   avatarTone,
   buildConversations,
+  createDraftConversation,
   dayLabel,
   initials,
   isFromMe,
@@ -78,6 +79,7 @@ import {
   type ChatDeletion,
   type ChatMessage,
   type Conversation,
+  type PeerKey,
 } from "@/lib/chat";
 
 type Branch = { id: string; store_name: string };
@@ -126,6 +128,7 @@ export default function ExecChat({ userId }: ExecChatProps) {
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(false);
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [draftPeerKey, setDraftPeerKey] = useState<PeerKey | null>(null);
   const [composing, setComposing] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
   const [alert, setAlert] = useState<NewMsgAlert | null>(null);
@@ -245,8 +248,17 @@ export default function ExecChat({ userId }: ExecChatProps) {
   );
 
   const active = useMemo(
-    () => conversations.find((c) => c.key === activeKey) || null,
-    [conversations, activeKey],
+    () => {
+      const existing = conversations.find((c) => c.key === activeKey);
+      if (existing) return existing;
+      if (!draftPeerKey) return null;
+      const [scope, peerId] = draftPeerKey.split(":", 2) as ["user" | "store", string];
+      const name = scope === "store"
+        ? ctx.nameForStore(peerId)
+        : ctx.nameForUser(peerId);
+      return createDraftConversation(draftPeerKey, name);
+    },
+    [conversations, activeKey, draftPeerKey, ctx],
   );
 
   const unreadTotal = useMemo(
@@ -409,6 +421,7 @@ export default function ExecChat({ userId }: ExecChatProps) {
       { scope: target.scope, peer_id: target.peerId, deleted_at: new Date().toISOString() },
     ]);
     setActiveKey((current) => (current === target.key ? null : current));
+    setDraftPeerKey((current) => (current === target.key ? null : current));
     toast({
       title: "Chat deleted",
       description: `This conversation with ${target.name} is hidden for you.`,
@@ -494,7 +507,7 @@ export default function ExecChat({ userId }: ExecChatProps) {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => setActiveKey(null)}
+                onClick={() => { setActiveKey(null); setDraftPeerKey(null); }}
                 title="Back to chats"
               >
                 <ArrowLeft className="h-5 w-5" />
@@ -533,7 +546,7 @@ export default function ExecChat({ userId }: ExecChatProps) {
                 variant="ghost"
                 size="icon"
                 title="New chat"
-                onClick={() => setComposing(true)}
+                onClick={() => { setDraftPeerKey(null); setComposing(true); }}
                 disabled={!branches.length && !execUsers.length}
               >
                 <Plus className="h-5 w-5" />
@@ -549,6 +562,7 @@ export default function ExecChat({ userId }: ExecChatProps) {
               </p>
               <Select
                 onValueChange={(value) => {
+                  setDraftPeerKey(value as PeerKey);
                   setActiveKey(value);
                   setComposing(false);
                 }}
@@ -723,7 +737,7 @@ export default function ExecChat({ userId }: ExecChatProps) {
                       >
                         <button
                           type="button"
-                          onClick={() => setActiveKey(conversation.key)}
+                          onClick={() => { setDraftPeerKey(null); setActiveKey(conversation.key); }}
                           className="flex min-w-0 flex-1 items-center gap-3 text-left"
                         >
                           <span

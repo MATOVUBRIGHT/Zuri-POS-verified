@@ -129,7 +129,7 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
       const [branchResult, inventoryResult] = await Promise.all([
         supabase.from("stores").select("id, store_name, user_id").eq("user_id", store.user_id).order("store_name"),
         supabase.from("inventory")
-          .select("id, product_name, category, size, barcode, quantity, damaged_quantity, cost_per_unit, retail_price, wholesale_price")
+          .select("id, product_name, category, size, barcode, quantity, cost_per_unit, retail_price, wholesale_price")
           .eq("store_id", currentStoreId)
           .gt("quantity", 0)
           .order("product_name"),

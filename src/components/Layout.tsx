@@ -47,7 +47,7 @@ import StoreChat from "@/components/StoreChat";
 import ExecChat from "@/components/ExecChat";
 import ScheduledPaymentPrompt from "@/components/ScheduledPaymentPrompt";
 import UserProfile from "@/components/UserProfile";
-import { AppSkeleton } from "@/components/AppSkeleton";
+import { PageLoader } from "@/components/ui/loading-spinner";
 
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -426,6 +426,13 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
   }, [productIndex, searchQuery]);
 
   const showPageSkeleton = Boolean(dataLoading && stockData.length === 0);
+
+  // Queries are intentionally cache-first for startup performance. When the
+  // user changes pages, refresh every active query so each screen reflects
+  // mutations made elsewhere in the app without blocking navigation.
+  useEffect(() => {
+    void queryClient.invalidateQueries({ refetchType: "active" });
+  }, [currentPage, queryClient]);
 
   const navigationIcons = { dashboard: LayoutDashboard, products: Boxes, suppliers: Truck, "stock-entry": Package, "sales-entry": ShoppingCart, inventory: Warehouse, "stock-transfers": ArrowLeftRight, "barcode-manager": Barcode, customers: Users, expenses: Receipt, accounts: Landmark, banking: Banknote, returns: Undo2, shifts: Clock, reports: FileText, resellers: Handshake, stores: Store, security: Shield, settings: SettingsIcon, "scheduled-payments": Receipt, admin: Shield };
   const navigationItems = [
@@ -1047,7 +1054,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
                 <main className="min-w-0 flex-1 overflow-y-auto overflow-x-clip p-4 sm:p-6">
           {showPageSkeleton ? (
             <div className="page-enter min-w-0 h-full">
-              <AppSkeleton />
+              <PageLoader text="Loading page..." className="min-h-[60vh]" />
             </div>
           ) : (
             <div key={currentPage} className="page-enter min-w-0 h-full">

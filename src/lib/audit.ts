@@ -25,7 +25,9 @@ export const logAudit = async ({
     const { data: { user } } = await supabase.auth.getUser();
     if (!user || !storeId) return;
 
-    await supabase.from("audit_logs").insert([{
+    // Keep the primary payload to columns present in the original audit table.
+    // Staff metadata is optional and was added by a later migration.
+    const auditRecord = {
       user_id: user.id,
       store_id: storeId,
       action,
@@ -33,9 +35,16 @@ export const logAudit = async ({
       record_id: recordId || null,
       old_data: oldData as any,
       new_data: newData as any,
-      staff_id: staffId,
-      staff_name: staffName,
-    }]);
+    };
+
+    const firstAttempt = await supabase.from("audit_logs").insert([auditRecord]);
+    if (!firstAttempt.error) return;
+
+    const legacy = await supabase.from("audit_logs").insert([{
+      user_id: user.id, store_id: storeId, action, entity_type: tableName,
+      entity_id: recordId || null, old_data: oldData, new_data: newData,
+    } as any]);
+    if (legacy.error) throw legacy.error;
   } catch (error) {
     console.error("Failed to log audit:", error);
   }
