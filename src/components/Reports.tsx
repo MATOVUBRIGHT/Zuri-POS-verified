@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FileText, Download, DollarSign, Package, AlertCircle,
@@ -246,6 +248,9 @@ const Reports = ({
   const [profitSearch, setProfitSearch] = useState("");
   const [unpaidSearch, setUnpaidSearch] = useState("");
   const [lowStockSearch, setLowStockSearch] = useState("");
+  const [paymentSale, setPaymentSale] = useState<SaleItem | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [isSavingPayment, setIsSavingPayment] = useState(false);
 
   // Auto-clear search when switching tabs
   useEffect(() => {
@@ -429,8 +434,64 @@ const Reports = ({
         sale.products.some((p) => p.productName === selectedProduct)
       );
 
-  // Unpaid sales
-  const unpaidSales = uniqueSalesData.filter(sale => !sale.paidInCash);
+  const getSalePaidAmount = (sale: SaleItem) => {
+    const total = Math.max(0, Number(sale.totalAmount) || 0);
+    if (sale.paidInCash) return total;
+    return Math.min(total, Math.max(0, Number(sale.paymentDetails?.amountReceived) || 0));
+  };
+
+  const getSaleBalance = (sale: SaleItem) => Math.max(0, (Number(sale.totalAmount) || 0) - getSalePaidAmount(sale));
+
+  const openPaymentDialog = (sale: SaleItem) => {
+    setPaymentSale(sale);
+    setPaymentAmount(String(Math.round(getSaleBalance(sale))));
+  };
+
+  const closePaymentDialog = () => {
+    setPaymentSale(null);
+    setPaymentAmount("");
+  };
+
+  const saveSalePayment = async () => {
+    if (!paymentSale) return;
+    const balance = getSaleBalance(paymentSale);
+    const amount = Number(paymentAmount);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > balance + 0.001) {
+      toast({ variant: "destructive", title: "Invalid payment amount", description: `Enter an amount between 1 and ${balance.toLocaleString()}.` });
+      return;
+    }
+
+    const nextPaid = getSalePaidAmount(paymentSale) + amount;
+    const isFullyPaid = nextPaid >= Number(paymentSale.totalAmount) - 0.001;
+    setIsSavingPayment(true);
+    try {
+      const paymentDetails = {
+        ...(paymentSale.paymentDetails || {}),
+        paymentMethod: paymentSale.paymentDetails?.paymentMethod || "Cash",
+        amountReceived: nextPaid,
+        paymentStatus: isFullyPaid ? "paid" : "partial",
+        lastPaymentAmount: amount,
+      };
+      const { error } = await supabase
+        .from("sales")
+        .update({ paid_in_cash: isFullyPaid, payment_details: paymentDetails } as any)
+        .eq("id", paymentSale.id);
+      if (error) throw error;
+
+      setSalesData((current) => current.map((sale) => sale.id === paymentSale.id
+        ? { ...sale, paidInCash: isFullyPaid, paymentDetails }
+        : sale));
+      toast({ title: isFullyPaid ? "Sale fully paid" : "Partial payment recorded", description: `${fmtCurrency(amount)} received.` });
+      closePaymentDialog();
+    } catch (error: any) {
+      toast({ variant: "destructive", title: "Payment failed", description: error?.message || "Could not update this sale." });
+    } finally {
+      setIsSavingPayment(false);
+    }
+  };
+
+  // Unpaid and partially paid sales
+  const unpaidSales = uniqueSalesData.filter(sale => getSaleBalance(sale) > 0.009);
 
   // Calculate summary statistics
   const totalSalesValue = productFilteredSales.reduce((sum, sale) => sum + (Number(sale.totalAmount) || 0), 0);
@@ -439,7 +500,7 @@ const Reports = ({
   const cashSalesTotal = productFilteredSales
     .filter((sale) => sale.paidInCash)
     .reduce((sum, sale) => sum + (Number(sale.totalAmount) || 0), 0);
-  const totalUnpaidValue = unpaidSales.reduce((sum, sale) => sum + (Number(sale.totalAmount) || 0), 0);
+  const totalUnpaidValue = unpaidSales.reduce((sum, sale) => sum + getSaleBalance(sale), 0);
 
   // Get unique product names for filter
   const allProducts = [...new Set(uniqueStockData.map(item => item.productName))];
@@ -1042,12 +1103,20 @@ const Reports = ({
                       <p className="text-xs text-muted-foreground">{(parseAnyDateToLocalDate(sale.dateOfSale) || new Date(sale.dateOfSale)).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</p>
                     </div>
                     <div className="text-right">
-                      <p className="font-bold text-base text-destructive">UGX {sale.totalAmount.toLocaleString()}</p>
-                      <Badge variant="destructive" className="text-[10px]">UNPAID</Badge>
+                      <p className="font-bold text-base text-destructive">UGX {getSaleBalance(sale).toLocaleString()}</p>
+                      <Badge variant="destructive" className="text-[10px]">{getSalePaidAmount(sale) > 0 ? "PART PAID" : "UNPAID"}</Badge>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {sale.products.map((p, i) => <Badge key={i} variant="outline" className="text-[10px]">{p.quantity}× {p.productName}</Badge>)}
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-red-200 pt-3">
+                    <div className="text-xs text-muted-foreground">
+                      {getSalePaidAmount(sale) > 0 ? `Paid UGX ${getSalePaidAmount(sale).toLocaleString()}` : "No payment recorded"}
+                    </div>
+                    <Button type="button" size="sm" onClick={() => openPaymentDialog(sale)}>
+                      <DollarSign className="mr-1 h-4 w-4" /> Pay
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -1112,6 +1181,47 @@ const Reports = ({
           <ShiftDiscrepancyReport currentStoreId={currentStoreId} />
         </TabsContent>
       </Tabs>
+
+      <Dialog open={Boolean(paymentSale)} onOpenChange={(open) => { if (!open) closePaymentDialog(); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Record payment</DialogTitle>
+            <DialogDescription>
+              {paymentSale?.customerName || "Walk-in"} · Outstanding UGX {paymentSale ? getSaleBalance(paymentSale).toLocaleString() : "0"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="report-payment-amount">Amount received</Label>
+              <Input
+                id="report-payment-amount"
+                type="number"
+                min="1"
+                max={paymentSale ? getSaleBalance(paymentSale) : undefined}
+                step="0.01"
+                value={paymentAmount}
+                onChange={(event) => setPaymentAmount(event.target.value)}
+                autoFocus
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={!paymentSale}
+              onClick={() => paymentSale && setPaymentAmount(String(Math.round(getSaleBalance(paymentSale))))}
+            >
+              Use full outstanding amount
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closePaymentDialog} disabled={isSavingPayment}>Cancel</Button>
+            <Button type="button" onClick={() => void saveSalePayment()} disabled={isSavingPayment || !paymentAmount}>
+              {isSavingPayment ? "Saving…" : "Save payment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

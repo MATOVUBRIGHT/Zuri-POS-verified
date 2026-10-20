@@ -168,7 +168,15 @@ export function useOptimizedExpenses(storeId: string | null, userId: string | nu
                     .order('date_of_expense', { ascending: false })
                     .limit(2000); // Reduced limit for performance
                 if (error) throw error;
-                return data || [];
+                const rows = data || [];
+                const userIds = [...new Set(rows.map((row: any) => row.user_id).filter(Boolean))];
+                if (userIds.length === 0) return rows;
+                const { data: profiles } = await supabase
+                    .from('profiles')
+                    .select('user_id, full_name')
+                    .in('user_id', userIds);
+                const names = new Map((profiles || []).map((profile: any) => [profile.user_id, profile.full_name]));
+                return rows.map((row: any) => ({ ...row, created_by_name: names.get(row.user_id) || null }));
             });
         },
         enabled: !!storeId && !!userId,

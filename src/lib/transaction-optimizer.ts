@@ -87,7 +87,7 @@ export class TransactionOptimizer {
       user_id: currentUser.id,
       store_id: resolvedStoreId,
     };
-    const saleResult = await supabase.from("sales").insert(saleInsert as any).select().single();
+    const saleResult = await supabase.from("sales").insert(saleInsert as any).select("id").single();
     if (saleResult.error) throw saleResult.error;
 
     const { sanitizeInventoryPayload } = await import("@/lib/inventoryPayload");
@@ -99,8 +99,7 @@ export class TransactionOptimizer {
         const inventoryResult = await supabase
           .from("inventory")
           .update(safeRest as any)
-          .eq("id", id as string)
-          .select();
+          .eq("id", id as string);
         if (inventoryResult.error) throw inventoryResult.error;
       });
 
@@ -111,7 +110,7 @@ export class TransactionOptimizer {
             ...cashTransaction,
             user_id: currentUser.id,
             store_id: (cashTransaction as any).store_id || resolvedStoreId
-          } as any).select()
+          } as any)
         : Promise.resolve({ error: null } as any),
     ]);
 

@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { LogOut, Store as StoreIcon, Clock, Settings } from "lucide-react";
+import { LogOut, Store as StoreIcon, Clock, Settings, Camera } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { UserProfile as UserProfileType } from "@/types";
 import { playSuccess } from "@/lib/sounds";
@@ -36,6 +36,8 @@ interface UserProfileProps {
 
 const UserProfile = ({ onPageChange, userRole = "owner", executiveMode = false }: UserProfileProps) => {
     const [profile, setProfile] = useState<UserProfileType | null>(null);
+    const [showAvatarModal, setShowAvatarModal] = useState(false);
+    const [isSavingAvatar, setIsSavingAvatar] = useState(false);
     const [showEndShiftModal, setShowEndShiftModal] = useState(false);
     const { store } = useShift();
     const [endingCash, setEndingCash] = useState(() => {
@@ -59,11 +61,48 @@ const UserProfile = ({ onPageChange, userRole = "owner", executiveMode = false }
                     .select("*")
                     .eq("user_id", user.id)
                     .maybeSingle();
-                setProfile(data);
+                setProfile(data || {
+                    id: "",
+                    user_id: user.id,
+                    full_name: user.user_metadata?.full_name || user.user_metadata?.name || "User",
+                    avatar_url: null,
+                });
             }
         };
         fetchProfile();
     }, []);
+
+    const saveAvatar = async (file: File) => {
+        if (!profile) return;
+        if (!file.type.startsWith("image/")) {
+            toast({ title: "Invalid image", description: "Please choose an image file.", variant: "destructive" });
+            return;
+        }
+        if (file.size > 8 * 1024 * 1024) {
+            toast({ title: "Image is too large", description: "Choose an image smaller than 8 MB.", variant: "destructive" });
+            return;
+        }
+
+        setIsSavingAvatar(true);
+        try {
+            const imageData = await new Promise<string>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result));
+                reader.onerror = () => reject(new Error("Could not read image"));
+                reader.readAsDataURL(file);
+            });
+            const update = supabase.from("profiles").update({ avatar_url: imageData }).eq("user_id", profile.user_id);
+            const result = profile.id ? await update : await supabase.from("profiles").insert({ user_id: profile.user_id, avatar_url: imageData, full_name: profile.full_name || "User" });
+            if (result.error) throw result.error;
+            setProfile({ ...profile, avatar_url: imageData });
+            setShowAvatarModal(false);
+            toast({ title: "Profile photo updated" });
+        } catch (error: any) {
+            toast({ title: "Could not save photo", description: error?.message || "Please try again.", variant: "destructive" });
+        } finally {
+            setIsSavingAvatar(false);
+        }
+    };
 
     const handleLogout = async () => {
         await supabase.auth.signOut();
@@ -99,6 +138,10 @@ const UserProfile = ({ onPageChange, userRole = "owner", executiveMode = false }
                     <Settings className="mr-2 h-4 w-4" />
                     <span>Settings</span>
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowAvatarModal(true)}>
+                    <Camera className="mr-2 h-4 w-4" />
+                    <span>Change profile photo</span>
+                </DropdownMenuItem>
                 {!executiveMode && (
                   <DropdownMenuItem onClick={() => onPageChange("stores")}>
                       <StoreIcon className="mr-2 h-4 w-4" />
@@ -124,6 +167,22 @@ const UserProfile = ({ onPageChange, userRole = "owner", executiveMode = false }
                 )}
             </DropdownMenuContent>
         </DropdownMenu>
+
+        <Dialog open={showAvatarModal} onOpenChange={setShowAvatarModal}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Profile photo</DialogTitle>
+              <DialogDescription>Choose an image. It will be shown to your team and on your POS profile.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <Avatar className="mx-auto h-28 w-28">
+                <AvatarImage src={profile.avatar_url || undefined} alt={profile.full_name || "User"} />
+                <AvatarFallback>{(profile.full_name || "User").slice(0, 2).toUpperCase()}</AvatarFallback>
+              </Avatar>
+              <Input type="file" accept="image/*" disabled={isSavingAvatar} onChange={(event) => { const file = event.target.files?.[0]; if (file) void saveAvatar(file); event.currentTarget.value = ""; }} />
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* End Shift Modal */}
         <Dialog open={showEndShiftModal} onOpenChange={setShowEndShiftModal}>

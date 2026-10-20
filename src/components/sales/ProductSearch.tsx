@@ -10,6 +10,8 @@ import { StockItem } from "@/types";
 import { buildProductSearchIndex, searchProductIndex } from "@/lib/productSearch";
 import { useInstantClearDeferredValue } from "@/hooks/useInstantClearDeferredValue";
 import { usePosStore } from "@/store/usePosStore";
+import { compactScannedCode, normalizeScannedCode } from "@/lib/barcode";
+import { playSuccess } from "@/lib/sounds";
 const BarcodeScanner = lazy(() => import("../BarcodeScanner"));
 
 interface ProductSearchProps {
@@ -60,8 +62,14 @@ export const ProductSearch = ({ stockData }: ProductSearchProps) => {
 
   const handleBarcodeScan = (code: string) => {
     setShowBarcodeScanner(false);
-    const found = stockData.find(s => s.barcode === code);
+    const normalized = normalizeScannedCode(code);
+    const compact = compactScannedCode(normalized);
+    const found = stockData.find(s => {
+      const barcode = normalizeScannedCode(s.barcode || "");
+      return barcode === normalized || (barcode && compactScannedCode(barcode) === compact);
+    });
     if (found) {
+      playSuccess();
       handleAdd(found);
     } else {
       toast({ title: "Product Not Found", description: `No product matches barcode ${code}`, variant: "destructive" });

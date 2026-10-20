@@ -159,7 +159,13 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
       }
 
       await logAudit({ action: "create", tableName: "expenses", newData: { description: formData.description, category: formData.category, amount }, storeId });
-      onAddExpense({ id: "opt-" + Date.now(), description: formData.description, category: formData.category, amount, paymentMethod: formData.paymentMethod, date: formData.date, notes: formData.notes, createdAt: new Date().toISOString() });
+      const createdByName = String(
+        user.user_metadata?.full_name
+          || user.user_metadata?.name
+          || user.email?.split("@")[0]
+          || "Current user"
+      );
+      onAddExpense({ id: "opt-" + Date.now(), description: formData.description, category: formData.category, amount, paymentMethod: formData.paymentMethod, date: formData.date, notes: formData.notes, createdAt: new Date().toISOString(), createdBy: user.id, createdByName });
       setFormData(emptyForm); setReceiptFile(null); setReceiptPreview(null);
       toast({ title: "✓ Expense recorded" });
       setAddOpen(false);
@@ -386,6 +392,7 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
                   <TableHead>Description</TableHead>
                   <TableHead>Category</TableHead>
                   <TableHead>Payment method</TableHead>
+                  <TableHead>Added by</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead className="w-12 text-right"><span className="sr-only">Actions</span></TableHead>
                 </TableRow>
@@ -401,6 +408,7 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
                       </span>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{expense.paymentMethod || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{expense.createdByName || "Unknown user"}</TableCell>
                     <TableCell className="whitespace-nowrap text-right font-semibold text-destructive">-{fmtCurrency(expense.amount)}</TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10" onClick={() => handleDelete(expense.id)} aria-label={`Delete ${expense.description}`}>

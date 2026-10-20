@@ -1,5 +1,16 @@
 import type { BarcodeType, BarcodeMode, LabelSize } from '@/types/barcode';
 
+/** Normalize values returned by phone/camera scanners before matching inventory. */
+export const normalizeScannedCode = (value: string): string => {
+  let code = String(value || '').trim().replace(/[\u0000-\u001f\u007f]/g, '');
+  // Some scanners include the GS1 symbology identifier (for example ]C1).
+  code = code.replace(/^\][A-Za-z]\d/, '');
+  return code.trim().toLowerCase();
+};
+
+export const compactScannedCode = (value: string): string =>
+  normalizeScannedCode(value).replace(/[^a-z0-9]/g, '');
+
 /**
  * Generate a unique barcode with configurable prefix
  */

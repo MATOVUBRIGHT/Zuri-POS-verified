@@ -360,7 +360,7 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
 
     return dedupedExpenses.map((exp: {
       id: string; description: string | null; amount: number; category: string | null;
-      date_of_expense: string; payment_method: string | null
+      date_of_expense: string; payment_method: string | null; user_id?: string | null; created_by_name?: string | null
     }) => ({
       id: exp.id,
       description: exp.description,
@@ -368,6 +368,8 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
       category: exp.category,
       date: exp.date_of_expense,
       paymentMethod: exp.payment_method,
+      createdBy: exp.user_id ?? null,
+      createdByName: exp.created_by_name ?? null,
     }));
   }, [rawExpenses]);
 

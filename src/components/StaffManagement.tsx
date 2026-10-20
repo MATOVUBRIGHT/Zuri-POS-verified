@@ -26,25 +26,18 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { Staff } from "@/types";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { BRANCH_ASSIGNABLE_POS_PAGES } from "@/lib/posPageRegistry";
 
-const ALL_PAGES = [
-    { id: "dashboard", label: "Dashboard" },
-    { id: "sales-entry", label: "Sales Entry" },
-    { id: "stock-entry", label: "Stock Entry" },
-    { id: "inventory", label: "Inventory" },
-    { id: "products", label: "Products" },
-    { id: "customers", label: "Customers" },
-    { id: "expenses", label: "Expenses" },
-    { id: "shifts", label: "Shifts" },
-    { id: "reports", label: "Reports" },
-    { id: "settings", label: "Settings" },
-    { id: "security", label: "Security Logs" },
-];
+// Keep the legacy staff manager in sync with Team & Access and the POS
+// navigation. Every operational page must be explicitly assigned or left off.
+const ALL_PAGES = BRANCH_ASSIGNABLE_POS_PAGES.map(({ id, label }) => ({ id, label }));
+const ALL_PAGE_IDS = ALL_PAGES.map(page => page.id);
 
 const DEFAULT_PAGES_BY_ROLE: Record<string, string[]> = {
     cashier: ["sales-entry", "shifts"],
-    manager: ["dashboard", "sales-entry", "stock-entry", "inventory", "products", "customers", "expenses", "shifts", "reports"],
-    admin: ALL_PAGES.map(p => p.id),
+    manager: ALL_PAGE_IDS,
+    accountant: ["dashboard", "supplier-reports", "expenses", "accounts", "banking", "scheduled-payments", "tracker", "reports"],
+    admin: ALL_PAGE_IDS,
 };
 
 interface StaffManagementProps { currentStoreId?: string | null; }
@@ -453,6 +446,7 @@ const StaffManagement = ({ currentStoreId }: StaffManagementProps) => {
                                 >
                                     <option value="cashier">Cashier</option>
                                     <option value="manager">Manager</option>
+                                    <option value="accountant">Accountant</option>
                                     <option value="admin">Administrator</option>
                                 </select>
                             </div>

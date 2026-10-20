@@ -160,6 +160,8 @@ export interface ExpenseItem {
   paymentMethod: string;
   notes?: string;
   createdAt?: string;
+  createdBy?: string | null;
+  createdByName?: string | null;
 }
 
 export interface ProductVariant {

@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Camera, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { playSuccess } from "@/lib/sounds";
 
 interface BarcodeScannerProps {
   isOpen: boolean;
@@ -19,7 +18,12 @@ const BarcodeScanner = ({ isOpen, onClose, onScan }: BarcodeScannerProps) => {
   const startInFlightRef = useRef(false);
   const lifecycleRef = useRef(0);
   const lastScanRef = useRef<{ value: string; at: number } | null>(null);
+  const onScanRef = useRef(onScan);
   const { toast } = useToast();
+
+  useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
 
   const stopScanner = useCallback(async () => {
     const scanner = scannerRef.current;
@@ -88,8 +92,10 @@ const BarcodeScanner = ({ isOpen, onClose, onScan }: BarcodeScannerProps) => {
           // twice increments its cart quantity without frame-loop duplicates.
           if (previous && previous.value.toLowerCase() === cleanedBarcode.toLowerCase() && now - previous.at < 900) return;
           lastScanRef.current = { value: cleanedBarcode, at: now };
-          playSuccess();
-          onScan(cleanedBarcode);
+          // Keep the camera lifecycle stable while the parent updates its cart.
+          // The parent decides whether the code matched a product before giving
+          // success feedback, so unknown scans do not beep repeatedly.
+          onScanRef.current(cleanedBarcode);
         },
         () => {
           // Ignore errors during scanning (no QR code found yet)
@@ -127,7 +133,7 @@ const BarcodeScanner = ({ isOpen, onClose, onScan }: BarcodeScannerProps) => {
     } finally {
       startInFlightRef.current = false;
     }
-  }, [isOpen, onScan, toast]);
+  }, [isOpen, toast]);
 
   useEffect(() => {
     if (isOpen) void beginCamera();

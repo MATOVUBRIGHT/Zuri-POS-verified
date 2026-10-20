@@ -24,6 +24,8 @@ import { cn } from "@/lib/utils";
 import { z } from "zod";
 const BarcodeScanner = lazy(() => import("./BarcodeScanner"));
 import { playCashRegister } from "@/lib/sounds";
+import { playSuccess } from "@/lib/sounds";
+import { compactScannedCode, normalizeScannedCode } from "@/lib/barcode";
 import { logAudit } from "@/lib/audit";
 const ExcelImport = lazy(() => import("@/components/ExcelImport"));
 import { calculateTransaction } from "@/services/posCalculator";
@@ -991,9 +993,13 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
 
     // Camera scanners can include whitespace or separator characters around
     // the value. Normalize those before checking local and remote inventory.
-    const cleanCode = code.trim();
-    const normalizedCode = cleanCode.toLowerCase();
-    const compactCode = normalizedCode.replace(/[^a-z0-9]/g, '');
+    const cleanCode = normalizeScannedCode(code);
+    const normalizedCode = cleanCode;
+    const compactCode = compactScannedCode(cleanCode);
+    // One camera decode represents one user action. Close the camera before
+    // any lookup so a barcode left in view cannot repeatedly add/beep while
+    // the database lookup or cart update is still settling.
+    setShowBarcodeScanner(false);
 
     // First check local stock data
     let foundProduct = stockData.find(item => {
@@ -1021,10 +1027,13 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
               .from('inventory')
               .select('*')
               .eq('store_id', storeId)
-              .eq('barcode', cleanCode)
-              .limit(1);
+              .not('barcode', 'is', null)
+              .limit(5000);
 
-            const dbProduct = dbProducts?.[0];
+            const dbProduct = (dbProducts || []).find((item: any) => {
+              const barcode = normalizeScannedCode(item.barcode || '');
+              return barcode === normalizedCode || (barcode && compactScannedCode(barcode) === compactCode);
+            });
 
             if (!error && dbProduct) {
               foundProduct = {
@@ -1057,9 +1066,12 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
                 .from('product_definitions')
                 .select('id, sku')
                 .eq('store_id', storeId)
-                .eq('sku', cleanCode)
-                .limit(1);
-              const definitionId = definitions?.[0]?.id;
+                .limit(5000);
+              const definition = (definitions || []).find((item: any) =>
+                normalizeScannedCode(item.sku || '') === normalizedCode
+                || compactScannedCode(item.sku || '') === compactCode
+              );
+              const definitionId = definition?.id;
               let inventoryId = definitionId
                 ? (await (supabase as any).from('inventory').select('id').eq('store_id', storeId).eq('product_definition_id', definitionId).limit(1)).data?.[0]?.id
                 : null;
@@ -1067,10 +1079,13 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
               if (!inventoryId) {
                 const { data: variants } = await (supabase as any)
                   .from('product_variants')
-                  .select('inventory_id')
-                  .eq('sku', cleanCode)
-                  .limit(1);
-                inventoryId = variants?.[0]?.inventory_id || null;
+                  .select('inventory_id, sku')
+                  .limit(5000);
+                const variant = (variants || []).find((item: any) =>
+                  normalizeScannedCode(item.sku || '') === normalizedCode
+                  || compactScannedCode(item.sku || '') === compactCode
+                );
+                inventoryId = variant?.inventory_id || null;
               }
 
               if (inventoryId) {
@@ -1126,6 +1141,7 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
       }
       
       addProduct(foundProduct);
+      playSuccess();
       const itemsPerSachet = foundProduct.items_per_sachet || 1;
       const sachetsAvail = Math.floor(foundProduct.quantity / itemsPerSachet);
 
