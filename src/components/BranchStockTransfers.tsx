@@ -52,6 +52,18 @@ type TransferRecord = StockTransferRequest & {
   items: StockTransferItem[];
 };
 
+const describeSupabaseError = (error: unknown, fallback: string) => {
+  if (error && typeof error === "object") {
+    const details = error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
+    const parts = [details.message, details.details, details.hint]
+      .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+      .map((part) => part.trim());
+    if (parts.length) return parts.join(" — ");
+    if (typeof details.code === "string" && details.code.trim()) return `Request failed (${details.code.trim()})`;
+  }
+  return error instanceof Error && error.message ? error.message : fallback;
+};
+
 const statusLabel: Record<StockTransferRequest["status"], string> = {
   pending: "Pending",
   partial: "Partially reviewed",
@@ -300,7 +312,7 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
     } catch (error) {
       toast({
         title: "Could not send transfer",
-        description: error instanceof Error ? error.message : "Please refresh and try again.",
+        description: describeSupabaseError(error, "Please refresh and try again."),
         variant: "destructive",
       });
     } finally {
@@ -332,7 +344,7 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
     } catch (error) {
       toast({
         title: decision === "approved" ? "Approval failed" : "Rejection failed",
-        description: error instanceof Error ? error.message : "Refresh the transfer and try again.",
+        description: describeSupabaseError(error, "Refresh the transfer and try again."),
         variant: "destructive",
       });
     } finally {

@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -270,7 +270,7 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
   }
 
   return (
-    <div className="flex h-full flex-col space-y-6 animate-in fade-in duration-500">
+    <div className="min-h-full space-y-6 pb-8 animate-in fade-in duration-500">
       {/* Header */}
       <div className="flex justify-between items-center flex-wrap gap-3">
         <div>
@@ -368,9 +368,8 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
         )}
       </div>
 
-      {/* Expense list */}
-        <ScrollArea className="min-h-0 flex-1" type="auto">
-        <div className="space-y-4 pr-2">
+      {/* Expense list — use the same dense, practical table treatment as Inventory. */}
+      <div className="overflow-x-auto rounded-lg border bg-card">
           {filtered.length === 0 ? (
             <div className="text-center py-10 text-muted-foreground">
               <Receipt className="h-10 w-10 mx-auto mb-2 opacity-30" />
@@ -379,35 +378,41 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
                 <Button className="mt-4" onClick={() => setAddOpen(true)}><Plus className="h-4 w-4 mr-2" />Record First Expense</Button>
               )}
             </div>
-          ) : filtered.map(expense => (
-            <div key={expense.id} className="flex items-center justify-between p-4 border rounded-xl hover:bg-muted/50 transition-colors">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center shrink-0">
-                  <TrendingDown className="h-5 w-5 text-red-500" />
-                </div>
-                <div className="flex-1 min-w-[150px]">
-                  <div className="flex items-center gap-2">
-                    <h4 className="font-semibold">{expense.description}</h4>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border font-medium ${CATEGORY_COLORS[expense.category] || "bg-muted text-muted-foreground"}`}>
-                      {expense.category}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {fmtDate(expense.date)}{expense.paymentMethod ? ` · ${expense.paymentMethod}` : ""}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <p className="font-bold text-destructive">-{fmtCurrency(expense.amount)}</p>
-                <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10"
-                  onClick={() => handleDelete(expense.id)}>
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </ScrollArea>
+          ) : (
+            <Table>
+              <TableHeader className="bg-muted/50 text-[10px] uppercase tracking-wider">
+                <TableRow>
+                  <TableHead className="whitespace-nowrap">Date</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Payment method</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead className="w-12 text-right"><span className="sr-only">Actions</span></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((expense) => (
+                  <TableRow key={expense.id} className="hover:bg-muted/40">
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{fmtDate(expense.date)}</TableCell>
+                    <TableCell className="max-w-[280px] font-medium"><span className="block truncate" title={expense.description}>{expense.description}</span></TableCell>
+                    <TableCell>
+                      <span className={`inline-flex whitespace-nowrap rounded border px-2 py-1 text-xs font-medium ${CATEGORY_COLORS[expense.category] || "bg-muted text-muted-foreground"}`}>
+                        {expense.category || "Other"}
+                      </span>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{expense.paymentMethod || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap text-right font-semibold text-destructive">-{fmtCurrency(expense.amount)}</TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10" onClick={() => handleDelete(expense.id)} aria-label={`Delete ${expense.description}`}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+      </div>
 
       {/* Add Expense Dialog */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>

@@ -193,7 +193,14 @@ export default function ExecutiveWorkspace({
   const [viewCurrency, setViewCurrency] = useState<string | null>(null);
   const [rates, setRates] = useState<Record<string, number> | null>(null);
   const [rateLoading, setRateLoading] = useState(false);
-  const [displayName, setDisplayName] = useState("");
+  const [displayName, setDisplayName] = useState(() => {
+    if (!userId) return "";
+    try {
+      return localStorage.getItem(`zuripos_profile_name:${userId}`) || "";
+    } catch {
+      return "";
+    }
+  });
 
   useEffect(() => {
     if (!userId) {
@@ -210,9 +217,14 @@ export default function ExecutiveWorkspace({
           .maybeSingle();
         if (!active) return;
         if (nameError) throw nameError;
-        setDisplayName((data?.full_name as string) || "");
+        const savedName = String(data?.full_name || "").trim();
+        if (savedName) {
+          setDisplayName(savedName);
+          try { localStorage.setItem(`zuripos_profile_name:${userId}`, savedName); } catch {}
+        }
       } catch {
-        if (active) setDisplayName("");
+        // Keep the persisted name during transient network/session failures.
+        // A failed refresh must not make the executive appear unnamed.
       }
     })();
     return () => {

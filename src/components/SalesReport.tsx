@@ -90,7 +90,7 @@ export default function SalesReport({ salesData, stockData = [], isLoading, onRe
       "Receipt #": receiptLabel(sale),
       "Sale ID": sale.id,
       "Customer": sale.customerName || "Walk-in",
-      "Sold By": (sale as any).staffName || "Owner",
+      "Sold By": (sale as any).staffName || "User",
       "Date": fmtDate(sale.created_at || sale.dateOfSale),
       "Products": (sale.products || []).map(p => `${p.quantity}x ${p.productName}`).join(", "),
       "Payment Method": sale.paymentDetails?.paymentMethod || (sale.paidInCash ? "Cash" : "Credit"),
@@ -194,7 +194,7 @@ export default function SalesReport({ salesData, stockData = [], isLoading, onRe
                   return <tr key={sale.id} className="border-t hover:bg-muted/30">
                     <td className="px-4 py-3 font-mono font-semibold text-primary">#{receiptLabel(sale)}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{fmtDate(sale.created_at || sale.dateOfSale)}</td>
-                    <td className="px-4 py-3 font-medium">{sale.customerName || "Walk-in"}<div className="text-xs text-muted-foreground">{(sale as any).staffName || "Owner"}</div></td>
+                    <td className="px-4 py-3 font-medium">{sale.customerName || "Walk-in"}<div className="text-xs text-muted-foreground">{(sale as any).staffName || "User"}</div></td>
                     <td className="max-w-[250px] px-4 py-3"><div className="flex flex-wrap gap-1">{(sale.products || []).map((p, index) => <Badge key={`${sale.id}-${index}`} variant="outline" className="max-w-[210px] truncate text-xs">{p.quantity}× {p.productName}</Badge>)}</div></td>
                     <td className="px-4 py-3"><Badge variant={sale.paidInCash ? "default" : "secondary"}>{method}</Badge></td>
                     <td className="px-4 py-3">{returned === "returned" ? <Badge variant="destructive">Returned</Badge> : returned === "partial_return" ? <Badge className="bg-amber-500">Partial return</Badge> : <Badge variant="outline">Completed</Badge>}</td>

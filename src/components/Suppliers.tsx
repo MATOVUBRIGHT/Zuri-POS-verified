@@ -639,11 +639,11 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
                 Add Supplier
               </Button>
             </DialogTrigger>
-          <DialogContent className="max-w-md max-h-[90vh] flex flex-col">
+          <DialogContent className="flex max-h-[90vh] max-w-md flex-col overflow-hidden">
             <DialogHeader className="pb-4">
               <DialogTitle>{editingSupplier ? "Edit Supplier" : "Add New Supplier"}</DialogTitle>
             </DialogHeader>
-            <ScrollArea className="flex-1 pr-4">
+            <ScrollArea className="min-h-0 flex-1 pr-4">
               <div className="pb-4 space-y-4">
               <div className="space-y-2">
                 <Label>Supplier Name *</Label>
@@ -759,7 +759,7 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
 
       {/* Pay Supplier Dialog */}
       <Dialog open={payDialogOpen} onOpenChange={setPayDialogOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-h-[90vh] max-w-sm overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Pay {payingSupplier?.name}</DialogTitle>
           </DialogHeader>
@@ -786,7 +786,7 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
 
       {/* View Supplier Dialog */}
       <Dialog open={!!viewSupplier} onOpenChange={(open) => !open && setViewSupplier(null)}>
-        <DialogContent className="flex max-h-[90vh] max-w-5xl flex-col">
+        <DialogContent className="flex max-h-[90vh] max-w-5xl flex-col overflow-hidden">
           <DialogHeader className="pb-4">
             <DialogTitle className="flex items-center gap-2">
               <Truck size={18} />
@@ -931,7 +931,7 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
         </DialogContent>
       </Dialog>
       <Dialog open={!!returningSupplier} onOpenChange={(open) => !open && setReturningSupplier(null)}>
-        <DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Return to supplier</DialogTitle></DialogHeader>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md"><DialogHeader><DialogTitle>Return to supplier</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">Return stock to {returningSupplier?.name}. This permanently reduces branch stock and applies the credit to their outstanding balance.</p>
           <div className="grid gap-3 py-2"><div><Label>Item / batch</Label><Select value={returnForm.inventoryId} onValueChange={(id) => { const item = returnInventory.find(i => i.id === id); setReturnForm(p => ({ ...p, inventoryId: id, unitCredit: String(item?.cost_per_unit || "") })); }}><SelectTrigger><SelectValue placeholder="Select supplier item" /></SelectTrigger><SelectContent>{returnInventory.map(item => <SelectItem key={item.id} value={item.id}>{item.product_name} · {item.quantity} available</SelectItem>)}</SelectContent></Select></div>
           {returnInventory.length === 0 && <p className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">No available inventory is linked to this supplier in this branch.</p>}

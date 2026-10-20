@@ -12,7 +12,7 @@ import { Mail, Lock, User, Shield, Eye, EyeOff, ArrowRight } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { z } from "zod";
-import authBg from "@/assets/auth-bg.jpg";
+import authBg from "@/assets/auth-bg-optimized.jpg";
 
 // Validation schemas
 const loginSchema = z.object({

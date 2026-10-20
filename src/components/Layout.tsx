@@ -639,11 +639,9 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
                                   onClick={() => {
                                     setSearchOpen(false);
                                     setSearchQuery("");
-                                    const params = new URLSearchParams({ 
-                                      q: product.product_name,
-                                      highlight: product.id 
-                                    });
-                                    window.location.hash = `#/inventory?${params.toString()}`;
+                                    // Keep search navigation inside the SPA.
+                                    // Writing a hash here can trigger a browser
+                                    // navigation/reload in some deployments.
                                     onPageChange('inventory');
                                   }}
                                 >

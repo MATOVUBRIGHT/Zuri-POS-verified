@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LoadingMark, PageLoader, useMinimumLoading } from "@/components/ui/loading-spinner";
-import { CircleAlert, ExternalLink as ExternalLinkIcon, Info, Landmark, MoreVertical, Pencil, Plus, Scale, WalletCards } from "lucide-react";
+import { ChevronDown, ChevronUp, CircleAlert, ExternalLink as ExternalLinkIcon, Info, Landmark, MoreVertical, Pencil, Plus, Scale, WalletCards } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtCurrency } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
@@ -102,6 +102,7 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
   const [providerCharges, setProviderCharges] = useState("");
   const [chargesTouched, setChargesTouched] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showDisclaimer, setShowDisclaimer] = useState(false);
 
   const [form, setForm] = useState<any>(blank);
   const [adjustment, setAdjustment] = useState({ amount: "", entry_type: "adjustment", reference: "", notes: "" });
@@ -329,19 +330,27 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
         </div>
       </div>
 
-      <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
-        <Info className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
-        <div className="text-sm text-amber-950">
-          <p className="font-semibold">These balances only capture what was entered into Zuri.</p>
-          <p className="mt-1 leading-6">
-            No provider statement is read, so charges and fees deducted by your bank or
-            mobile money operator are never captured. A recorded balance will therefore
-            look higher than the real one. To get the exact figure, open{" "}
-            <span className="font-semibold">Reconcile</span>, enter the actual amount from
-            your provider statement, and Zuri will show the entered amount, the charges it
-            could not see, the outgoing payments, and the true net figure.
-          </p>
-        </div>
+      <div className="space-y-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="gap-2 text-muted-foreground"
+          onClick={() => setShowDisclaimer((visible) => !visible)}
+          aria-expanded={showDisclaimer}
+        >
+          <Info className="h-4 w-4" />
+          How account balances work
+          {showDisclaimer ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </Button>
+        {showDisclaimer && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <Info className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+            <p className="text-sm leading-6 text-amber-950">
+              These balances only capture what was entered into Zuri. Provider statements and fees are not read automatically, so use <span className="font-semibold">Reconcile</span> with the actual statement amount to record charges and see the true net figure.
+            </p>
+          </div>
+        )}
       </div>
 
       {loading ? (

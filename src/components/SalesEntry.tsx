@@ -19,18 +19,18 @@ import { useDebounce } from "@/hooks/use-debounce";
 import { usePaymentAccounts } from "@/hooks/usePaymentAccounts";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
-import { Product, SaleItem, StockItem, TaxConfig, PaymentMethod, Customer, Store as StoreType, Staff } from "@/types";
+import { Product, SaleItem, StockItem, TaxConfig, PaymentMethod, Customer, Store as StoreType } from "@/types";
 import { cn } from "@/lib/utils";
 import { z } from "zod";
-import BarcodeScanner from "./BarcodeScanner";
+const BarcodeScanner = lazy(() => import("./BarcodeScanner"));
 import { playCashRegister } from "@/lib/sounds";
 import { logAudit } from "@/lib/audit";
-import ExcelImport from "@/components/ExcelImport";
+const ExcelImport = lazy(() => import("@/components/ExcelImport"));
 import { calculateTransaction } from "@/services/posCalculator";
 import { useAddSaleOptimistic } from "@/hooks/useOptimizedData";
 import { insertRowsWithSchemaFallback, updateByIdWithSchemaFallback } from "@/lib/supabaseSchemaFallback";
 import { useQueryClient } from "@tanstack/react-query";
-import SalesReport from "@/components/SalesReport";
+const SalesReport = lazy(() => import("@/components/SalesReport"));
 import PendingSales, { loadPending } from "@/components/PendingSales";
 import { getCurrencySymbol } from "@/lib/currency";
 import { usePosStore } from "@/store/usePosStore";
@@ -163,7 +163,7 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
   const historySearchRef = useRef<HTMLInputElement>(null);
   const [refundOption, setRefundOption] = useState<'cash' | 'original' | 'schedule' | 'credit_adjust'>('cash');
   const [userName, setUserName] = useState<string>("");
-  const [currentStaff, setCurrentStaff] = useState<{ id: string | null, name: string }>({ id: null, name: "Owner" });
+  const [currentStaff, setCurrentStaff] = useState<{ id: string | null, name: string }>({ id: null, name: "User" });
   const [storeInfo, setStoreInfo] = useState<StoreType | null>(null);
   const [availableTaxes, setAvailableTaxes] = useState<TaxConfig[]>([]);
   const [availablePaymentMethods, setAvailablePaymentMethods] = useState<PaymentMethod[]>([]);
@@ -277,9 +277,18 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
         .eq('user_id', user.id)
         .maybeSingle();
 
-      if (profile?.full_name) {
-        setUserName(profile.full_name.split(' ')[0]);
-      }
+      let cachedName = "";
+      try { cachedName = localStorage.getItem(`zuripos_profile_name:${user.id}`) || ""; } catch {}
+      const loggedInName = String(
+        profile?.full_name
+          || cachedName
+          || user.user_metadata?.full_name
+          || user.user_metadata?.name
+          || user.email?.split("@")[0]
+          || "User"
+      ).trim();
+      setUserName(loggedInName);
+      try { localStorage.setItem(`zuripos_profile_name:${user.id}`, loggedInName); } catch {}
 
       // Get current store info for receipts
       const { data: storeData } = await supabase
@@ -337,24 +346,19 @@ setSelectedPaymentAccountId(prev =>
         prev && paymentAccountsQuery.data?.some((a) => a.id === prev) ? prev : null,
       );
 
-      // Get active shift to identify current cashier
-      const { data: activeShift } = await supabase
-        .from('shifts')
-        .select('*, staff:staff_id(*)')
+      // Resolve the person who is actually signed in. An open shift can belong
+      // to somebody else, so it must never decide who appears on a receipt.
+      const { data: signedInStaff } = await supabase
+        .from('staff')
+        .select('id, full_name')
         .eq('store_id', storeId)
-        .eq('status', 'open')
+        .eq('user_id', user.id)
+        .eq('status', 'active')
         .maybeSingle();
-
-      if (activeShift) {
-        if (activeShift.staff_id && activeShift.staff) {
-          const staff = activeShift.staff as unknown as Staff;
-          setCurrentStaff({ id: staff.id, name: staff.full_name });
-        } else {
-          setCurrentStaff({ id: null, name: "Owner" });
-        }
-      } else {
-        setCurrentStaff({ id: null, name: profile?.full_name || "Owner" });
-      }
+      setCurrentStaff({
+        id: signedInStaff?.id || null,
+        name: loggedInName || signedInStaff?.full_name || "User",
+      });
 
       const { data, error } = await supabase
         .from('customers')
@@ -423,6 +427,19 @@ setSelectedPaymentAccountId(prev =>
         .limit(50);
 
       if (!error && data) {
+        const userIds = [...new Set(data
+          .map((sale) => (sale as any).user_id)
+          .filter((id): id is string => Boolean(id)))];
+        const profileNames = new Map<string, string>();
+        if (userIds.length > 0) {
+          const { data: profiles } = await supabase
+            .from("profiles")
+            .select("user_id, full_name")
+            .in("user_id", userIds);
+          for (const entry of profiles || []) {
+            if (entry.full_name) profileNames.set(entry.user_id, entry.full_name);
+          }
+        }
         setSalesHistory(data.map(sale => ({
           id: sale.id,
           receiptNumber: (sale as any).receipt_number ?? null,
@@ -435,7 +452,9 @@ setSelectedPaymentAccountId(prev =>
           paymentMethodId: (sale as any).payment_method_id ?? null,
           paymentDetails: (sale as any).payment_details ?? null,
           staff_id: (sale as any).staff_id ?? null,
-          staffName: (sale as any).staff?.full_name ?? null,
+          staffName: (sale as any).staff?.full_name
+            ?? profileNames.get((sale as any).user_id)
+            ?? ((sale as any).user_id === user.id ? currentStaff.name : null),
         })));
       }
     } catch (error) {
@@ -1129,7 +1148,7 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
 
     const saleStaffName = sale.staffName
       || (sale.staff_id && sale.staff_id === currentStaff.id ? currentStaff.name : null)
-      || "Owner";
+      || "User";
 
     const htmlContent = generateReceiptHTML({
       sale,
@@ -1584,7 +1603,7 @@ const requiresPaymentDetails = isPaidSale && hasMethodRow && !isCashMethod;
             <Printer className="h-4 w-4" /> Re-print receipt
           </Button>
           <WalkInTracker currentStoreId={currentStoreId} />
-          <ExcelImport config={{
+          <Suspense fallback={null}><ExcelImport config={{
             title: "Import Sales from Excel",
             description: "Upload an Excel file with sales records",
             fields: [
@@ -1630,7 +1649,7 @@ const requiresPaymentDetails = isPaidSale && hasMethodRow && !isCashMethod;
               }
               return { success, errors };
             },
-          }} />
+          }} /></Suspense>
           <div className="flex flex-col items-end gap-1">
             <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20">POS System</Badge>
             <span className="text-[10px] text-muted-foreground font-mono">v2.1 Enterprise</span>
@@ -2677,13 +2696,13 @@ setSelectedPaymentMethodId(matchingMethod?.id || null);
         </TabsContent>
 
         <TabsContent value="history">
-          <SalesReport
+          <Suspense fallback={null}><SalesReport
             salesData={salesHistory}
             stockData={stockData}
             isLoading={isLoadingHistory}
             onReturn={openReturnDialog}
             title="Sales History"
-          />
+          /></Suspense>
         </TabsContent>
       </Tabs>
 
@@ -2715,7 +2734,7 @@ setSelectedPaymentMethodId(matchingMethod?.id || null);
                           {sale.customerName}
                         </TableCell>
                         <TableCell className="text-sm text-muted-foreground">
-                          Sold by {(sale as any).staffName || "Owner"}
+                          Sold by {(sale as any).staffName || "User"}
                         </TableCell>
                         <TableCell className="max-w-[200px]">
                           <div className="flex flex-wrap gap-1">
@@ -2936,11 +2955,11 @@ setSelectedPaymentMethodId(matchingMethod?.id || null);
       </Dialog>
 
       {/* Barcode Scanner Modal */}
-      <BarcodeScanner
+      <Suspense fallback={null}><BarcodeScanner
         isOpen={showBarcodeScanner}
         onClose={() => setShowBarcodeScanner(false)}
         onScan={handleBarcodeScan}
-      />
+      /></Suspense>
 
 
 

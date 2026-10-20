@@ -57,17 +57,15 @@ export const ShiftProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // Handle invalid refresh token errors
       if (sessionError) {
         console.error("Session error:", sessionError);
-        if (sessionError.message.includes("refresh_token_not_found") || 
-            sessionError.message.includes("Refresh Token Not Found") ||
-            sessionError.message.includes("Invalid Refresh Token")) {
-          console.log("Clearing invalid session...");
-          await supabase.auth.signOut({ scope: 'local' });
-          setUser(null);
-          setActiveShift(null);
-          setStore(null);
-          setIsAdmin(false);
-          setIsStable(false);
-          clearShiftCache();
+        // Do not turn a transient auth refresh/network error into a logout.
+        // Supabase emits SIGNED_OUT when the session is genuinely invalid.
+        const cachedSession = loadShiftCache();
+        if (!session && cachedSession?.user) {
+          setUser(cachedSession.user);
+          setStore(cachedSession.store);
+          setActiveShift(cachedSession.activeShift);
+          setIsAdmin(Boolean(cachedSession.isAdmin));
+          setIsStable(true);
           setLoading(false);
           return;
         }

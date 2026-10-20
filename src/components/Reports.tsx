@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FileText, Download, DollarSign, Package, AlertCircle,
@@ -159,7 +158,7 @@ const ShiftDiscrepancyReport = ({ currentStoreId }: { currentStoreId?: string })
           <p className="text-sm">No closed shifts found</p>
         </div>
       ) : (
-        <ScrollArea className="h-[500px] pr-2">
+        <div className="max-h-[60vh] overflow-y-auto pr-2">
           <div className="space-y-3">
             {shifts.map(shift => {
               const actual = Number(shift.ending_cash_actual ?? 0);
@@ -216,7 +215,7 @@ const ShiftDiscrepancyReport = ({ currentStoreId }: { currentStoreId?: string })
               );
             })}
           </div>
-        </ScrollArea>
+        </div>
       )}
     </div>
   );
@@ -752,7 +751,7 @@ const Reports = ({
   };
 
   return (
-    <div className="flex h-full flex-col space-y-6 animate-in fade-in duration-500">
+    <div className="min-h-full space-y-6 pb-8 animate-in fade-in duration-500">
       <div className="flex justify-between items-center flex-wrap gap-3">
         <div>
           <h2 className="text-3xl font-bold flex items-center gap-3">
@@ -899,7 +898,7 @@ const Reports = ({
             <Input value={stockSearch} onChange={e => setStockSearch(e.target.value)} placeholder="Search products or stock ID..." autoComplete="off" className="pl-9 pr-9" />
             {stockSearch && <button onClick={() => setStockSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>}
           </div>
-          <ScrollArea className="h-[400px]" type="auto">
+          <div className="max-h-[60vh] overflow-y-auto pr-2">
             <div className="space-y-2 pr-2">
               {stockData.filter(i => !stockSearch || i.id.toLowerCase().includes(stockSearch.toLowerCase()) || i.productName.toLowerCase().includes(stockSearch.toLowerCase()) || (i.category || "").toLowerCase().includes(stockSearch.toLowerCase())).map((item, idx) => {
                 const val = item.quantity * (item.costPerUnit || item.cost_per_unit || 0);
@@ -922,7 +921,7 @@ const Reports = ({
                 );
               })}
             </div>
-          </ScrollArea>
+          </div>
         </TabsContent>
 
         {/* ── PROFIT ── */}
@@ -979,7 +978,7 @@ const Reports = ({
             <Input value={profitSearch} onChange={e => setProfitSearch(e.target.value)} placeholder="Search products..." autoComplete="off" className="pl-9 pr-9" />
             {profitSearch && <button onClick={() => setProfitSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>}
           </div>
-          <ScrollArea className="h-[400px]" type="auto">
+          <div className="max-h-[60vh] overflow-y-auto pr-2">
             <div className="space-y-2 pr-2">
               {(() => {
                 const periodData = profitPeriod === "today" ? dailyProfits : profitPeriod === "week" ? weeklyProfits : profitPeriod === "month" ? monthlyProfits : profitAnalysis;
@@ -1001,7 +1000,7 @@ const Reports = ({
                 ));
               })()}
             </div>
-          </ScrollArea>
+          </div>
         </TabsContent>
 
         {/* ── UNPAID ── */}
@@ -1031,7 +1030,7 @@ const Reports = ({
             <Input value={unpaidSearch} onChange={e => setUnpaidSearch(e.target.value)} placeholder="Search by customer, product, or sale ID..." autoComplete="off" className="pl-9 pr-9" />
             {unpaidSearch && <button onClick={() => setUnpaidSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>}
           </div>
-          <ScrollArea className="h-[450px]" type="auto">
+          <div className="max-h-[60vh] overflow-y-auto pr-2">
             <div className="space-y-2 pr-2">
               {unpaidSales.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground"><ShoppingBag className="h-10 w-10 mx-auto mb-2 opacity-20" /><p className="font-medium">All sales are paid</p></div>
@@ -1053,7 +1052,7 @@ const Reports = ({
                 </div>
               ))}
             </div>
-          </ScrollArea>
+          </div>
         </TabsContent>
 
         {/* ── LOW STOCK ── */}
@@ -1077,7 +1076,7 @@ const Reports = ({
             <Input value={lowStockSearch} onChange={e => setLowStockSearch(e.target.value)} placeholder="Search products..." autoComplete="off" className="pl-9 pr-9" />
             {lowStockSearch && <button onClick={() => setLowStockSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>}
           </div>
-          <ScrollArea className="h-[450px]" type="auto">
+          <div className="max-h-[60vh] overflow-y-auto pr-2">
             <div className="space-y-2 pr-2">
               {stockData.filter(i => i.quantity < (i.min_stock_level || 10) * 2)
                 .filter(i => !lowStockSearch || i.productName.toLowerCase().includes(lowStockSearch.toLowerCase()) || (i.category || "").toLowerCase().includes(lowStockSearch.toLowerCase()))
@@ -1106,7 +1105,7 @@ const Reports = ({
                 <div className="text-center py-12 text-muted-foreground"><Package className="h-10 w-10 mx-auto mb-2 opacity-20" /><p className="font-medium">All inventory levels are healthy</p></div>
               )}
             </div>
-          </ScrollArea>
+          </div>
         </TabsContent>
         {/* ── SHIFTS DISCREPANCY ── */}
         <TabsContent value="shifts" className="space-y-4">

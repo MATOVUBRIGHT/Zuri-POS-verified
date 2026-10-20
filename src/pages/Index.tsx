@@ -9,6 +9,7 @@ const SalesEntry = lazy(() => import("@/components/SalesEntry"));
 const InventoryManagement = lazy(() => import("@/components/InventoryManagement"));
 const BarcodeManager = lazy(() => import("@/components/BarcodeManager"));
 const Reports = lazy(() => import("@/components/Reports"));
+const ExecutiveReports = lazy(() => import("@/components/ExecutiveReports"));
 const Expenses = lazy(() => import("@/components/Expenses"));
 const Settings = lazy(() => import("@/components/Settings"));
 const Stores = lazy(() => import("@/components/Stores"));
@@ -135,19 +136,16 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
   };
 
   // If this tab was opened into a branch POS via the executive workspace,
-  // treat a browser Back navigation as a logout (do not return to executive UI).
+  // let browser Back return to the previous workspace. Navigating back must
+  // never destroy the authenticated session.
   useEffect(() => {
     if (!posStoreId) return;
     let fromExec = false;
     try { fromExec = sessionStorage.getItem('open_from_executive') === '1'; } catch {}
     if (!fromExec) return;
 
-    const handlePop = async () => {
-      try {
-        await supabase.auth.signOut();
-      } catch {}
+    const handlePop = () => {
       try { sessionStorage.removeItem('open_from_executive'); } catch {}
-      navigate('/auth', { replace: true });
     };
 
     window.addEventListener('popstate', handlePop);
@@ -536,13 +534,6 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
 
           if (error) {
             console.error("Session check error:", error);
-            const msg = String((error as any)?.message || "");
-
-            if (msg.includes("refresh_token_not_found") || msg.includes("Refresh Token Not Found")) {
-              await supabase.auth.signOut();
-              navigate("/auth");
-              return;
-            }
 
             if (attempt < maxAttempts) {
               // Retry transient errors (tab switching/background wakeups).
@@ -647,15 +638,6 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
           }
         } catch (error) {
           console.error("Unexpected error during session check:", error);
-          const msg = String((error as any)?.message || "");
-
-          if (msg.includes("refresh_token_not_found") || msg.includes("Refresh Token Not Found")) {
-            await supabase.auth.signOut();
-            setRoleResolved(false);
-            setResolvedWorkspaceRole(null);
-            navigate("/auth");
-            return;
-          }
 
           if (attempt < maxAttempts) {
             setTimeout(() => void run(attempt + 1), 850);
@@ -1145,17 +1127,19 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
             </Suspense>
           );
         case "executive-reports":
-          return userRole === "accountant"
-            ? (
-              <Suspense fallback={<LoadingSpinner size="lg" />}>
-                <RoleDashboards mode="accountant" userId={userId} onOpenReports={() => {}} />
-              </Suspense>
-            )
-            : (
-              <Suspense fallback={<LoadingSpinner size="lg" />}>
-                <ExecutiveWorkspace page="executive-reports" userId={userId} onOpenBranch={openBranchPos} />
-              </Suspense>
-            );
+          return (
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <ExecutiveReports
+                userId={userId}
+                currentStoreId={currentStoreId}
+                onStoreChange={setCurrentStoreId}
+                stockData={stockData}
+                salesData={salesData}
+                expensesData={expensesData}
+                onPageChange={handlePageChange}
+              />
+            </Suspense>
+          );
         case "executive-settings":
           return (
             <Suspense fallback={<LoadingSpinner size="lg" />}>

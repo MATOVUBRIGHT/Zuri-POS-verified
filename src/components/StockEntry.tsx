@@ -1,14 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { fmtCurrency } from "@/lib/currency";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { BatchItem } from "@/types";
-import BarcodeScanner from "./BarcodeScanner";
+const BarcodeScanner = lazy(() => import("./BarcodeScanner"));
 import { useOptimizedSuppliers, useOptimizedCategories, useAddBatchStockOptimistic } from "@/hooks/useOptimizedData";
 import { useShift } from "@/providers/ShiftProvider";
 import { StockForm } from "./stock/StockForm";
 import { BatchTable } from "./stock/BatchTable";
-import ExcelImport from "./ExcelImport";
+const ExcelImport = lazy(() => import("./ExcelImport"));
 import { Package, PauseCircle, FileText, Trash2, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -439,7 +439,7 @@ const StockEntry = ({ pageParams, availableCash: availableCashProp, currentStore
              Clear
            </Button>
            {/* Excel Import would go here with its own refactored logic if needed */}
-           <ExcelImport config={{
+           <Suspense fallback={null}><ExcelImport config={{
             title: "Bulk Stock Import",
             fields: [
               { key: "product_name", label: "Product Name", required: true, aliases: ["Item", "Product", "Name"] },
@@ -543,7 +543,7 @@ const StockEntry = ({ pageParams, availableCash: availableCashProp, currentStore
                 "Product Image URL/Path": ""
               }
             ]
-           }} />
+           }} /></Suspense>
         </div>
       </div>
 
@@ -574,11 +574,11 @@ const StockEntry = ({ pageParams, availableCash: availableCashProp, currentStore
         </div>
       </div>
 
-      <BarcodeScanner
+      <Suspense fallback={null}><BarcodeScanner
         isOpen={showBarcodeScanner}
         onClose={() => setShowBarcodeScanner(false)}
         onScan={handleBarcodeScan}
-      />
+      /></Suspense>
 
       <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
         <DialogContent>

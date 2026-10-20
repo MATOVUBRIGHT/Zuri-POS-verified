@@ -89,9 +89,10 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
       try {
         const { data: { user }, error } = await supabase.auth.getUser();
         if (error) {
-          if (error.message.includes("refresh_token_not_found") || error.message.includes("Refresh Token Not Found")) {
-            await supabase.auth.signOut();
-          }
+          // A panel-level user lookup must not sign out the whole app. The
+          // central auth listener handles a genuine SIGNED_OUT event; this
+          // error may be a transient refresh/network failure.
+          console.warn("Could not resolve current user for Stores:", error.message);
           return;
         }
         setCurrentUserId(user?.id || null);

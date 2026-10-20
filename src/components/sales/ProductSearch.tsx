@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect } from "react";
+import { useState, useRef, useMemo, useEffect, lazy, Suspense } from "react";
 import { fmtCurrency } from "@/lib/currency";
 import { Search, Camera, Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { StockItem } from "@/types";
 import { buildProductSearchIndex, searchProductIndex } from "@/lib/productSearch";
 import { useInstantClearDeferredValue } from "@/hooks/useInstantClearDeferredValue";
 import { usePosStore } from "@/store/usePosStore";
-import BarcodeScanner from "../BarcodeScanner";
+const BarcodeScanner = lazy(() => import("../BarcodeScanner"));
 
 interface ProductSearchProps {
   stockData: StockItem[];
@@ -156,11 +156,11 @@ export const ProductSearch = ({ stockData }: ProductSearchProps) => {
       )}
 
       {showBarcodeScanner && (
-        <BarcodeScanner
+        <Suspense fallback={null}><BarcodeScanner
           isOpen={showBarcodeScanner}
           onScan={handleBarcodeScan}
           onClose={() => setShowBarcodeScanner(false)}
-        />
+        /></Suspense>
       )}
     </div>
   );

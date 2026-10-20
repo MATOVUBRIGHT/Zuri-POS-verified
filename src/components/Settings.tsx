@@ -420,6 +420,10 @@ const Settings = ({ stockData, salesData, expensesData, currentStoreId, onDataIm
 
       if (error) throw error;
 
+      try {
+        localStorage.setItem(`zuripos_profile_name:${user.id}`, profile.full_name.trim());
+      } catch {}
+
       // Apply theme only when explicitly saved
       applyTheme('light');
       applyColorScheme(colorScheme);

@@ -87,7 +87,9 @@ class OptimizedCache {
       
       // Store in both memory and persistent cache
       this.setMemoryCache(key, data, ttl);
-      await cache.set(key, data, ttl / 1000); // cache.set expects seconds
+      // cache.set expects milliseconds, matching the TTL used by this class.
+      // Dividing here reduced a 20-minute cache to roughly 1.2 seconds.
+      await cache.set(key, data, ttl);
       
       return data;
     } catch (error) {
@@ -153,8 +155,13 @@ class OptimizedCache {
       }
     }
     
-    // Persistent cache invalidation
-    cache.invalidate(keyPattern);
+    // Persistent cache invalidation. The IndexedDB layer stores the full key,
+    // so remove every matching entry rather than only an exact key.
+    void cache.keys().then((keys) => Promise.all(
+      keys
+        .filter((key) => key.includes(keyPattern))
+        .map((key) => cache.invalidate(key)),
+    ));
   }
 
   // Get cache stats for performance monitoring

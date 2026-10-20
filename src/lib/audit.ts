@@ -33,6 +33,8 @@ export const logAudit = async ({
       action,
       table_name: tableName,
       record_id: recordId || null,
+      staff_id: staffId || null,
+      staff_name: staffName || null,
       old_data: oldData as any,
       new_data: newData as any,
     };
@@ -43,6 +45,8 @@ export const logAudit = async ({
     const legacy = await supabase.from("audit_logs").insert([{
       user_id: user.id, store_id: storeId, action, entity_type: tableName,
       entity_id: recordId || null, old_data: oldData, new_data: newData,
+      staff_id: staffId || null,
+      staff_name: staffName || null,
     } as any]);
     if (legacy.error) throw legacy.error;
   } catch (error) {
