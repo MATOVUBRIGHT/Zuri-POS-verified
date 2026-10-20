@@ -12,7 +12,9 @@ export const useInventoryOptimized = (storeId: string | null, userId: string | n
 
       const { data, error } = await supabase
         .from('inventory')
-        .select('*')
+        // Do not pull potentially large product_image values for the bulk
+        // inventory list used by POS.
+        .select('id, product_name, category, quantity, sachets_count, loose_items, opened_sachets, items_per_sachet, retail_price, wholesale_price, cost_per_unit, total_value, date_of_purchase, store_id, min_stock_level, reorder_quantity, notes, packaging_type, unit_name, barcode, barcode_type, barcode_mode, supplier_name, size')
         .eq('store_id', storeId)
         .order('product_name', { ascending: true });
 
@@ -71,7 +73,7 @@ export const useNewStock = (storeId: string | null, userId: string | null) => {
 
       const { data, error } = await supabase
         .from('inventory')
-        .select('*')
+        .select('id, product_name, category, quantity, sachets_count, loose_items, opened_sachets, items_per_sachet, retail_price, wholesale_price, cost_per_unit, total_value, date_of_purchase, created_at, store_id, min_stock_level, reorder_quantity, notes, packaging_type, unit_name, barcode, barcode_type, barcode_mode, supplier_name, size')
         .eq('store_id', storeId)
         .gte('created_at', sevenDaysAgo.toISOString())
         .order('created_at', { ascending: false })

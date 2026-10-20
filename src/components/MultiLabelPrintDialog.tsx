@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Printer, Plus, X, Trash2, ArrowUp, ArrowDown, Search, CheckCircle } from 'lucide-react';
 import { StockItem } from '@/types';
-import LabelPreview, { type PrintItem, type Orientation, type ShowFields } from './LabelPreview';
+import LabelPreview, { fitLabelText, type PrintItem, type Orientation, type ShowFields } from './LabelPreview';
 
 type LabelSizeType =
   | '58mm'
@@ -269,6 +269,8 @@ export default function MultiLabelPrintDialog({
       const cellsHtml = pageLabels
         .map((inst) => {
           const barcode = inst.product.barcode || '';
+          const nameFit = fitLabelText(inst.product.productName, 9 / 3.7795, width, 1.4);
+          const skuFit = fitLabelText(barcode, 6 / 3.7795, width, 1.1);
           const price = inst.product.retail_price
             ? `${fmtCurrency(inst.product.retail_price)}`
             : 'N/A';
@@ -278,7 +280,7 @@ export default function MultiLabelPrintDialog({
               <div class="label-content">
                 ${
                   showFields.productName
-                    ? `<div class="label-product-name">${escapeHtml(inst.product.productName)}</div>`
+                    ? `<div class="label-product-name" style="font-size:${nameFit.fontSizeMm}mm">${escapeHtml(nameFit.text)}</div>`
                     : ''
                 }
                 ${
@@ -287,7 +289,7 @@ export default function MultiLabelPrintDialog({
                     : ''
                 }
                 ${showFields.price ? `<div class="label-price">${escapeHtml(price)}</div>` : ''}
-                ${showFields.sku ? `<div class="label-sku">${escapeHtml(barcode)}</div>` : ''}
+                ${showFields.sku ? `<div class="label-sku" style="font-size:${skuFit.fontSizeMm}mm">${escapeHtml(skuFit.text)}</div>` : ''}
               </div>
             </div>
           `;

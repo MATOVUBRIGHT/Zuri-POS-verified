@@ -46,7 +46,7 @@ const Auth = () => {
     let mounted = true;
     let redirectStarted = false;
     
-    const redirectAfterSignIn = () => {
+    const redirectAfterSignIn = async (session: { user: { id: string } } | null = null) => {
       if (redirectStarted || !mounted) return;
       redirectStarted = true;
       try {
@@ -59,6 +59,39 @@ const Auth = () => {
       } catch (error) {
         console.warn("Could not read the post-auth redirect:", error);
       }
+
+      // Branch users who use the regular email/password form should land in
+      // their assigned POS immediately. Owners and executives have no
+      // branch-only access row, so they continue to the executive workspace.
+      try {
+        const activeSession = session || (await supabase.auth.getSession()).data.session;
+        if (activeSession?.user?.id) {
+          const { data: ownedStores } = await supabase
+            .from("stores")
+            .select("id")
+            .eq("user_id", activeSession.user.id)
+            .limit(1);
+
+          if (!ownedStores?.length) {
+            const { data: assignedStores } = await supabase
+              .from("store_access")
+              .select("store_id")
+              .eq("user_id", activeSession.user.id)
+              .limit(1);
+
+            const assignedStoreId = assignedStores?.[0]?.store_id;
+            if (assignedStoreId) {
+              navigate(`/pos/${assignedStoreId}`, { replace: true });
+              return;
+            }
+          }
+        }
+      } catch (error) {
+        // A routing lookup failure should never block authentication. The
+        // authenticated root route will perform its normal workspace check.
+        console.warn("Could not resolve the user's direct POS route:", error);
+      }
+
       navigate("/", { replace: true });
     };
     
@@ -68,11 +101,9 @@ const Auth = () => {
       
       // Only redirect on successful sign in, avoid multiple redirects
       if (event === 'SIGNED_IN' && session && !redirectStarted) {
-        // Clear authenticating state and add a small delay to prevent visual flickering
+        // Keep the compact sign-in state until the destination is resolved.
         setIsAuthenticating(false);
-        setTimeout(() => {
-          if (mounted) redirectAfterSignIn();
-        }, 100);
+        void redirectAfterSignIn(session);
       } else if (event === 'SIGNED_OUT') {
         setIsAuthenticating(false);
       }
@@ -97,7 +128,7 @@ const Auth = () => {
         }
         if (session && !redirectStarted) {
           // Immediate redirect for existing sessions
-          redirectAfterSignIn();
+          void redirectAfterSignIn(session);
         }
       })
       .catch((error: unknown) => {
@@ -149,11 +180,8 @@ const Auth = () => {
           description: error.message,
         });
       } else {
-        // Keep authenticating state until redirect happens
-        toast({
-          title: "Welcome back!",
-          description: "Successfully logged in.",
-        });
+        // Keep the compact authenticating state until the direct destination
+        // is resolved; the POS itself is the success confirmation.
       }
     } catch (error) {
       console.error("Login request failed:", error);

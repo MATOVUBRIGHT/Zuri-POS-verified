@@ -83,7 +83,7 @@ import {
 } from "@/lib/chat";
 
 type Branch = { id: string; store_name: string };
-type ExecUser = { id: string; display_name: string };
+type ExecUser = { id: string; display_name: string; role?: string };
 type NewMsgAlert = { id: string; fromLabel: string; text: string };
 type TypingAlert = { fromLabel: string };
 
@@ -164,18 +164,28 @@ export default function ExecChat({ userId }: ExecChatProps) {
     ) as Branch[];
     setBranches(allBranches);
 
-    // Other executive/accountant users who share at least one branch
+    // List every person who can legitimately be reached through one of the
+    // user's branches. This includes branch owners (who do not necessarily
+    // have a store_access row) and assigned executives/accountants/users.
     const storeIds = allBranches.map((b) => b.id);
     if (storeIds.length) {
-      const { data: peers } = await supabase
-        .from("store_access")
-        .select("user_id, role")
-        .in("store_id", storeIds)
-        .in("role", ["owner", "boss", "accountant"]);
+      const [{ data: peers }, { data: owners }] = await Promise.all([
+        supabase
+          .from("store_access")
+          .select("user_id, role")
+          .in("store_id", storeIds),
+        supabase
+          .from("stores")
+          .select("user_id")
+          .in("id", storeIds),
+      ]);
 
       const peerIds = Array.from(
         new Set(
-          (peers || []).map((p: any) => p.user_id).filter((id: string) => id !== userId),
+          [
+            ...(peers || []).map((p: any) => p.user_id),
+            ...(owners || []).map((owner: any) => owner.user_id),
+          ].filter((id: string) => id && id !== userId),
         ),
       );
 
@@ -185,13 +195,26 @@ export default function ExecChat({ userId }: ExecChatProps) {
           .select("user_id, full_name")
           .in("user_id", peerIds);
 
+        const roleById = new Map<string, string>();
+        (peers || []).forEach((peer: any) => {
+          if (peer.user_id && !roleById.has(peer.user_id)) roleById.set(peer.user_id, peer.role || "User");
+        });
+        (owners || []).forEach((owner: any) => {
+          if (owner.user_id && !roleById.has(owner.user_id)) roleById.set(owner.user_id, "Owner");
+        });
+
         setExecUsers(
           (profiles || []).map((p: any) => ({
             id: p.user_id,
-            display_name: p.full_name || "Executive",
+            display_name: p.full_name || roleById.get(p.user_id) || "User",
+            role: roleById.get(p.user_id),
           })),
         );
+      } else {
+        setExecUsers([]);
       }
+    } else {
+      setExecUsers([]);
     }
 
     const { data: del } = await supabase
@@ -619,11 +642,11 @@ export default function ExecChat({ userId }: ExecChatProps) {
                   {execUsers.length > 0 && (
                     <>
                       <div className="px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground">
-                        Executives / Accountants
+                        Users / Executives / Accountants
                       </div>
                       {execUsers.map((u) => (
                         <SelectItem key={u.id} value={peerKey("user", u.id)}>
-                          {u.display_name}
+                          {u.display_name}{u.role ? ` · ${u.role}` : ""}
                         </SelectItem>
                       ))}
                     </>

@@ -161,7 +161,7 @@ export default function BarcodePrintDialog({
         format: 'CODE128',
         width: 1.5,
         height: printHeight,
-        displayValue: true,
+        displayValue: false,
         text: product.productName,
         fontSize: 10,
         margin: 2,

@@ -89,6 +89,7 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [canManageTransfers, setCanManageTransfers] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [inventory, setInventory] = useState<InventoryChoice[]>([]);
   const [transfers, setTransfers] = useState<TransferRecord[]>([]);
@@ -111,6 +112,7 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
       setBranches([]);
       setInventory([]);
       setTransfers([]);
+      setCanManageTransfers(false);
       return;
     }
 
@@ -125,6 +127,11 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
       if (storeError) throw storeError;
       if (!store) throw new Error("This branch is not available to your account.");
       setOwnerId(store.user_id);
+
+      const { data: canManage } = await supabase.rpc("can_manage_stock_transfer_store", {
+        _store_id: currentStoreId,
+      });
+      setCanManageTransfers(Boolean(canManage));
 
       const [branchResult, inventoryResult] = await Promise.all([
         supabase.from("stores").select("id, store_name, user_id").eq("user_id", store.user_id).order("store_name"),
@@ -235,6 +242,7 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
   );
 
   const openRequestDialog = () => {
+    if (!canManageTransfers) return;
     setDestinationId(eligibleDestinations[0]?.id || "");
     setSelectedQuantities({});
     setInventorySearch("");
@@ -442,7 +450,7 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
           <Button type="button" variant="outline" onClick={() => void loadWorkspace()} disabled={loading} aria-label="Refresh stock transfers">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           </Button>
-          <Button type="button" onClick={openRequestDialog} disabled={!eligibleDestinations.length || !sellableInventory.length}>
+          <Button type="button" onClick={openRequestDialog} disabled={!canManageTransfers || !eligibleDestinations.length || !sellableInventory.length}>
             <Share2 className="mr-2 h-4 w-4" />Share stock
           </Button>
         </div>
@@ -528,7 +536,7 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
                   ? "Send a request to a same-business branch. Source stock remains unchanged while it is pending."
                   : "No other branch under this business is currently available to pair with this branch."}
               </p>
-              {!transfers.length && eligibleDestinations.length > 0 && (
+              {!transfers.length && eligibleDestinations.length > 0 && canManageTransfers && (
                 <Button className="mt-4" onClick={openRequestDialog} disabled={!sellableInventory.length}>
                   <Plus className="mr-2 h-4 w-4" />Create first transfer
                 </Button>

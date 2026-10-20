@@ -15,6 +15,7 @@ const Stores = lazy(() => import("@/components/Stores"));
 const Products = lazy(() => import("@/components/Products"));
 const Customers = lazy(() => import("@/components/Customers"));
 const Shifts = lazy(() => import("@/components/Shifts"));
+const StaffManagement = lazy(() => import("@/components/StaffManagement"));
 const OnboardingIntro = lazy(() => import("@/components/OnboardingIntro"));
 const AuditLogs = lazy(() => import("@/components/AuditLogs"));
 const Suppliers = lazy(() => import("@/components/Suppliers"));
@@ -1395,6 +1396,12 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
             <Shifts onUpdateCash={handleUpdateCash} onRefresh={refreshData} onStaffLogin={handleStaffLogin} onStaffLogout={handleStaffLogout} />
           </Suspense>
         );
+      case "staff":
+        return (
+          <Suspense fallback={<LoadingSpinner size="lg" />}>
+            <StaffManagement currentStoreId={currentStoreId} />
+          </Suspense>
+        );
       case "security":
         return (
           <Suspense fallback={<LoadingSpinner size="lg" />}>
@@ -1430,7 +1437,22 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
   const staffAllowedPages: string[] = useMemo(() => {
     if (hasExecutivePosAccess) return [];
     if (!activeStaff?.allowed_pages) return [];
-    return Array.isArray(activeStaff.allowed_pages) ? (activeStaff.allowed_pages as string[]).filter(isBranchAssignablePosPage) : [];
+    // Older provisioned staff rows stored this JSONB value as a serialized
+    // string. Normalize both shapes so assigned pages remain clickable after
+    // login instead of silently looking like an empty assignment.
+    const raw = (activeStaff as { allowed_pages?: unknown }).allowed_pages;
+    let pages: unknown[] = [];
+    if (Array.isArray(raw)) {
+      pages = raw;
+    } else if (typeof raw === "string") {
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed)) pages = parsed;
+      } catch {
+        pages = [];
+      }
+    }
+    return pages.filter((page): page is string => typeof page === "string" && isBranchAssignablePosPage(page));
   }, [activeStaff?.allowed_pages, hasExecutivePosAccess]);
 
   // Enforce page restrictions: if staff tries to access unauthorized page, redirect

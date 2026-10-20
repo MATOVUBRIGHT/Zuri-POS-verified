@@ -518,7 +518,7 @@ export default function ExecutiveWorkspace({
   ) : page === "executive-branches" ? (
     <Branches
       branches={displayBranches}
-      onCreate={openCreate}
+      onCreate={canCreateBranch ? openCreate : undefined}
       onManage={setManagedBranch}
     />
   ) : page === "executive-team" ? (
@@ -553,7 +553,7 @@ export default function ExecutiveWorkspace({
       currencyTotals={displayCurrencyTotals}
       todayCurrencyTotals={displayTodayCurrencyTotals}
       branches={displayBranches}
-      onCreate={openCreate}
+      onCreate={canCreateBranch ? openCreate : undefined}
       onManage={setManagedBranch}
     />
   );
@@ -640,7 +640,7 @@ export default function ExecutiveWorkspace({
             />
           </Button>
           {/* Settings available in the executive sidebar - removed header shortcut */}
-          {page !== "executive-reports" && page !== "executive-team" && (
+          {canCreateBranch && page !== "executive-reports" && page !== "executive-team" && (
             <Button onClick={openCreate}>
               <Plus className="mr-2 h-4 w-4" />
               Create branch

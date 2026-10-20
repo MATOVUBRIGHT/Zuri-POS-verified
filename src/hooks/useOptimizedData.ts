@@ -59,13 +59,30 @@ export function useOptimizedInventory(storeId: string | null, userId: string | n
                 `inventory:${storeId}:enhanced`,
                 async () => {
                     return await dataSyncService.getDataWithLocalFirst(`inventory:${storeId}`, async () => {
+                        // Keep the POS payload lean. Product images can be large
+                        // (and are loaded by image-specific screens); including
+                        // them for thousands of inventory rows causes PostgREST
+                        // statement timeouts during POS startup.
+                        const inventorySelect = 'id, user_id, store_id, product_name, category, size, barcode, barcode_type, barcode_mode, quantity, cost_per_unit, total_value, retail_price, wholesale_price, date_of_purchase, sachets_count, loose_items, opened_sachets, items_per_sachet, min_stock_level, reorder_quantity, notes, packaging_type, unit_name, supplier_id, supplier_name, created_at';
                         const { data, error } = await supabase
                             .from('inventory')
-                            .select('id, user_id, store_id, product_name, category, size, barcode, barcode_type, barcode_mode, quantity, cost_per_unit, total_value, retail_price, wholesale_price, date_of_purchase, sachets_count, loose_items, opened_sachets, items_per_sachet, min_stock_level, reorder_quantity, notes, packaging_type, unit_name, supplier_id, supplier_name, product_image, created_at')
+                            .select(inventorySelect)
                             .eq('store_id', storeId)
                             .order('created_at', { ascending: false })
                             .limit(5000); // Reduced limit for faster loading
-                        if (error) throw error;
+                        if (error) {
+                            // Older hosted databases can briefly lag the latest
+                            // inventory columns. Keep POS usable with the
+                            // stable core fields while migrations catch up.
+                            const fallback = await supabase
+                                .from('inventory')
+                                .select('id, user_id, store_id, product_name, category, quantity, cost_per_unit, total_value, retail_price, wholesale_price, date_of_purchase, created_at')
+                                .eq('store_id', storeId)
+                                .order('created_at', { ascending: false })
+                                .limit(5000);
+                            if (fallback.error) throw error;
+                            return fallback.data || [];
+                        }
                         return data || [];
                     });
                 },

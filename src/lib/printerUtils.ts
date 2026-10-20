@@ -312,7 +312,7 @@ export const generateBarcodeImage = (
       format: barcodeType,
       width,
       height,
-      displayValue: true,
+      displayValue: false,
       fontSize: 14,
       margin: 10,
     });
@@ -530,7 +530,9 @@ const buildZplLabel = (job: PrintJob): string => {
         lines.push(`^FO${qrX},${y}^BQN,2,${mag}^FDLA,${sanitizeZplFieldData(job.barcode)}^FS`);
         y += qrSize + lineGap;
       } else {
-        const barcodeField = getZplBarcodeField(barcodeType, barcodeH, "Y");
+        // Suppress the human-readable barcode value below the bars. The
+        // optional SKU field is rendered separately when selected.
+        const barcodeField = getZplBarcodeField(barcodeType, barcodeH, "N");
         lines.push(`^FO${barcodeX},${y}^BY${moduleW},2,${barcodeH}${barcodeField}^FD${job.barcode}^FS`);
         y += barcodeH + lineGap;
       }
@@ -871,8 +873,8 @@ export const printBarcodeLabel = async (
     // GS w — barcode module width: 2 for narrow labels, 3 for wider
     const escModuleWidth = Math.max(2, Math.min(6, escLayout.moduleWidth));
     commands.push(0x1D, 0x77, escModuleWidth);
-    // GS H — HRI position: 2=below
-    commands.push(0x1D, 0x48, 2);
+    // GS H — HRI position: 0=none (do not print barcode text below bars)
+    commands.push(0x1D, 0x48, 0);
     // GS f — HRI font: 0=font A (small)
     commands.push(0x1D, 0x66, 0);
     // GS k — CODE128 (type 73), length-prefixed

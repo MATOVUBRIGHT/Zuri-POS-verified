@@ -118,6 +118,25 @@ function resolveStyle(s: LabelStyle, lw: number, lh: number) {
   };
 }
 
+/** Fit text independently for each label, then use literal two-dot truncation. */
+export function fitLabelText(value: string, baseMm: number, widthMm: number, minMm = 1.2) {
+  const text = String(value || '').trim();
+  if (!text) return { text: '', fontSizeMm: baseMm };
+
+  // Approximate average glyph width. This is intentionally conservative so
+  // labels remain readable while long names get a smaller font of their own.
+  const availableMm = Math.max(8, widthMm - 4);
+  const charsAtBase = Math.max(1, Math.floor(availableMm / (baseMm * 0.52)));
+  if (text.length <= charsAtBase) return { text, fontSizeMm: baseMm };
+
+  const fittedMm = Math.max(minMm, baseMm * charsAtBase / text.length);
+  const charsAtMinimum = Math.max(3, Math.floor(availableMm / (minMm * 0.52)));
+  if (text.length <= charsAtMinimum) return { text, fontSizeMm: fittedMm };
+
+  const keep = Math.max(1, charsAtMinimum - 2);
+  return { text: `${text.slice(0, keep)}..`, fontSizeMm: minMm };
+}
+
 // ─── generatePrintHTML ───────────────────────────────────────────────────────
 export function generatePrintHTML(
   printItems: PrintItem[],
@@ -172,6 +191,8 @@ export function generatePrintHTML(
   const activeOrder=fieldOrder.filter(f=>showFields[f]);
   const labelsHTML=instances.map(({product,idx})=>{
     const barcode=product.barcode||'';
+    const nameFit=fitLabelText(product.productName, r.nameMm, lw, 1.4);
+    const skuFit=fitLabelText(barcode, r.skuMm, lw, 1.1);
     const rawPrice=product.retail_price||0;
     // Format price with "Ugx" casing (sentence case)
     const currencySymbol=getCurrencySymbol().replace(/^UGX$/,'Ugx');
@@ -179,9 +200,9 @@ export function generatePrintHTML(
 
     // Separate price from other fields — price always goes to footer
     const topFields=activeOrder.filter(f=>f!=='price').map(f=>{
-      if(f==='productName') return `<div class="f f-name">${product.productName.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
+      if(f==='productName') return `<div class="f f-name" style="font-size:${nameFit.fontSizeMm}mm">${nameFit.text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`;
       if(f==='barcode'&&barcode) return `<div class="f-barcode"><svg id="bc-${idx}" data-value="${barcode}" data-height="${barcodeHpx}" data-format="${barcodeFormat}"></svg></div>`;
-      if(f==='sku'&&barcode) return `<div class="f f-sku">${barcode}</div>`;
+      if(f==='sku'&&barcode) return `<div class="f f-sku" style="font-size:${skuFit.fontSizeMm}mm">${skuFit.text}</div>`;
       return '';
     }).filter(Boolean).join('\n');
 
@@ -449,6 +470,8 @@ export default function LabelPreview({
                     const currSym=getCurrencySymbol().replace(/^UGX$/,'Ugx');
                     const priceAmt=Math.round(rawPrice).toLocaleString();
                     const barcode=inst.product.barcode||'';
+                    const nameFit=fitLabelText(inst.product.productName, r.nameMm, labelWmm, 1.4);
+                    const skuFit=fitLabelText(barcode, r.skuMm, labelWmm, 1.1);
                     const topOrder=activeOrder.filter(f=>f!=='price');
                     return (
                       <div key={inst.key} style={{
@@ -467,8 +490,8 @@ export default function LabelPreview({
                             whiteSpace:'nowrap',textAlign:r.align,flexShrink:0,
                           };
                           if(f==='productName') return (
-                            <div key="n" style={{...base,fontSize:r.namePx*sc,fontWeight:style.nameBold?'bold':'normal',fontStyle:style.nameItalic?'italic':'normal',lineHeight:1.15}} title={inst.product.productName}>
-                              {inst.product.productName}
+                            <div key="n" style={{...base,fontSize:nameFit.fontSizeMm*MM*sc,fontWeight:style.nameBold?'bold':'normal',fontStyle:style.nameItalic?'italic':'normal',lineHeight:1.15}} title={inst.product.productName}>
+                              {nameFit.text}
                             </div>
                           );
                           if(f==='barcode'&&barcode) return (
@@ -485,7 +508,7 @@ export default function LabelPreview({
                             </div>
                           );
                           if(f==='sku'&&barcode) return (
-                            <div key="s" style={{...base,fontSize:r.skuPx*sc,fontWeight:style.skuBold?'bold':'normal',fontStyle:style.skuItalic?'italic':'normal',fontFamily:'monospace',color:'#555',textAlign:'center'}} title={barcode}>{barcode}</div>
+                            <div key="s" style={{...base,fontSize:skuFit.fontSizeMm*MM*sc,fontWeight:style.skuBold?'bold':'normal',fontStyle:style.skuItalic?'italic':'normal',fontFamily:'monospace',color:'#555',textAlign:'center'}} title={barcode}>{skuFit.text}</div>
                           );
                           return null;
                         })}

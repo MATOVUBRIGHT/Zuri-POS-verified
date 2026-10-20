@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { fmtCurrency, getCurrencySymbol } from "@/lib/currency";
 import { Printer, X, ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -87,7 +88,7 @@ export default function PrintPreviewEditor({
 
   const handleBrowserPrint = () => {
     const html = generatePrintHTML(printItems, labelSizeType, showFields, orientation, customW, customH, fieldOrder, effectiveLabelStyle);
-    const win = window.open('', '_blank', 'width=500,height=600');
+    const win = window.open('', '_blank', 'popup,width=1200,height=900,resizable=yes,scrollbars=yes');
     if (!win) { toast({ title: 'Allow popups to print labels', variant: 'destructive' }); return; }
     win.document.write(html);
     win.document.close();
@@ -129,11 +130,11 @@ export default function PrintPreviewEditor({
 
   const detectedProtocol = printer?.protocol ?? 'escpos';
 
-  return (
-    <div className="fixed inset-0 z-50 bg-background flex flex-col" style={{ fontFamily: 'inherit' }}>
+  return createPortal((
+    <div className="fixed inset-0 z-[100] h-dvh min-h-0 bg-background flex flex-col" style={{ fontFamily: 'inherit' }}>
       {/* ── Top bar ── */}
-      <div className="flex items-center justify-between px-4 py-2 border-b bg-card shrink-0">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap px-3 sm:px-4 py-2 border-b bg-card shrink-0">
+        <div className="flex items-center gap-2 flex-wrap ml-auto">
           <Printer className="h-5 w-5 text-primary" />
           <span className="font-semibold text-base">Label Editor &amp; Print</span>
           <span className="text-xs text-muted-foreground ml-2">{totalLabels} label{totalLabels !== 1 ? 's' : ''}</span>
@@ -160,10 +161,10 @@ export default function PrintPreviewEditor({
       </div>
 
       {/* ── Body: left sidebar + right preview ── */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div className="flex flex-1 min-h-0 flex-col lg:flex-row overflow-auto lg:overflow-hidden">
 
         {/* Left sidebar — label size, protocol, products */}
-        <div className="w-72 shrink-0 border-r bg-muted/20 flex flex-col overflow-y-auto">
+        <div className="w-full lg:w-72 max-h-[42dvh] lg:max-h-none shrink-0 border-r bg-muted/20 flex flex-col overflow-y-auto">
           <div className="p-4 space-y-4 text-sm">
 
             {printerProfile && <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs"><p className="font-semibold text-foreground">Hardware profile active</p><p className="mt-1 text-muted-foreground">{printerProfile.widthMm} × {printerProfile.heightMm} mm · {printerProfile.dpi === 'auto' ? 'Auto DPI' : `${printerProfile.dpi} DPI`} · {printerProfile.orientation} · X/Y {printerProfile.offsetXmm}/{printerProfile.offsetYmm} mm</p><p className="mt-1 text-muted-foreground">Bars {printerProfile.barcodeModuleWidth === 'auto' ? 'auto' : `${printerProfile.barcodeModuleWidth} dots`} · Barcode height {printerProfile.barcodeHeightMm === 'auto' ? 'auto' : `${printerProfile.barcodeHeightMm} mm`}</p><Button variant="link" className="mt-1 h-auto p-0 text-xs" onClick={() => setProfileOpen(true)}>Calibrate or change profile</Button></div>}
@@ -243,7 +244,7 @@ export default function PrintPreviewEditor({
         </div>
 
         {/* Right: full label editor (controls + live preview side by side) */}
-        <div className="flex-1 min-w-0 overflow-auto p-4">
+        <div className="flex-1 min-h-0 min-w-0 overflow-auto p-3 sm:p-4">
           <LabelPreview
             printItems={printItems}
             labelSizeType={labelSizeType}
@@ -264,5 +265,5 @@ export default function PrintPreviewEditor({
       </div>
       <BarcodePrinterProfileDialog open={profileOpen} onOpenChange={setProfileOpen} onSave={(saved) => { setPrinterProfile(saved); setCustomW(saved.widthMm); setCustomH(saved.heightMm); setOrientation(saved.orientation); setProtocol(saved.protocol); setLabelSizeType('custom'); }} />
     </div>
-  );
+  ), document.body);
 }

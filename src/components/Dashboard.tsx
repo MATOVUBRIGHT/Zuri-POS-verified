@@ -425,7 +425,7 @@ const Dashboard = ({
                     </CardHeader>
                     <CardContent className="flex-1 p-4 min-h-0">
                         <div className="h-full min-h-[320px]">
-                            <ResponsiveContainer width="100%" height="100%">
+                            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                                 {chartType === "bar" ? (
                                     <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
                                         <CartesianGrid strokeDasharray="3 3" opacity={0.3} vertical={false} />
@@ -474,7 +474,7 @@ const Dashboard = ({
                             <DialogTitle>Sales Overview — {chartPeriod === "week" ? "Last 7 days" : chartPeriod === "month" ? "Last 4 weeks" : "Last 12 months"}</DialogTitle>
                         </DialogHeader>
                         <div className="h-[500px] w-full">
-                            <ResponsiveContainer width="100%" height="100%">
+                            <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                                 {chartType === "bar" ? (
                                     <BarChart data={chartData} margin={{ top: 16, right: 24, bottom: 8, left: 8 }}>
                                         <CartesianGrid strokeDasharray="3 3" opacity={0.3} vertical={false} />
@@ -596,7 +596,7 @@ const Dashboard = ({
                     <div className="grid gap-4 lg:grid-cols-5">
                         <div className="lg:col-span-3 rounded-xl border bg-background/80 p-3">
                             <div className="h-[220px]">
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                                     <AreaChart data={monthlyPrediction.chartData} margin={{ top: 10, right: 8, left: 4, bottom: 0 }}>
                                         <defs>
                                             <linearGradient id="monthlyForecastFill" x1="0" y1="0" x2="0" y2="1">

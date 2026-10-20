@@ -586,7 +586,7 @@ setSelectedPaymentAccountId(prev =>
 
     setSearchTerm('');
     setSelectedIndex(0);
-  }, [saleType, toast]); // Removed products and profile from dependencies
+  }, [products, saleType, toast]);
   const updateProductQuantity = useCallback((productName: string, quantity: number, sellType: 'item' | 'sachet') => {
     const stockItem = stockData.find(s => s.productName === productName);
     const itemsPerSachet = stockItem?.items_per_sachet || 1;
@@ -961,8 +961,6 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
   const splitApplied = splitPayments.length > 1;
 
   const handleBarcodeScan = async (code: string) => {
-    setShowBarcodeScanner(false);
-
     if (!code || code.trim() === '') {
       toast({
         variant: "destructive",
@@ -974,13 +972,19 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
 
     // Camera scanners can include whitespace or separator characters around
     // the value. Normalize those before checking local and remote inventory.
-    const cleanCode = code.trim().replace(/[^a-zA-Z0-9]/g, '');
+    const cleanCode = code.trim();
+    const normalizedCode = cleanCode.toLowerCase();
+    const compactCode = normalizedCode.replace(/[^a-z0-9]/g, '');
 
     // First check local stock data
-    let foundProduct = stockData.find(item =>
-      item.barcode === cleanCode ||
-      (item.barcode && item.barcode.toLowerCase() === cleanCode.toLowerCase())
-    );
+    let foundProduct = stockData.find(item => {
+      const barcode = item.barcode?.trim().toLowerCase() || '';
+      const sku = (item as StockItem & { sku?: string }).sku?.trim().toLowerCase() || '';
+      return barcode === normalizedCode
+        || (barcode && barcode.replace(/[^a-z0-9]/g, '') === compactCode)
+        || sku === normalizedCode
+        || (sku && sku.replace(/[^a-z0-9]/g, '') === compactCode);
+    });
 
     // If not found locally, try database
     if (!foundProduct) {
@@ -1024,6 +1028,63 @@ const splitTotal = splitPayments.reduce((sum, payment) => sum + (Number(payment.
                 min_stock_level: dbProduct.min_stock_level || 5,
                 reorder_quantity: dbProduct.reorder_quantity || 10
               } as StockItem;
+            }
+
+            // SKU is stored in product_definitions or product_variants on
+            // newer databases, while older inventory rows only have barcode.
+            // Resolve either SKU source to its inventory row for camera scans.
+            if (!foundProduct) {
+              const { data: definitions } = await (supabase as any)
+                .from('product_definitions')
+                .select('id, sku')
+                .eq('store_id', storeId)
+                .eq('sku', cleanCode)
+                .limit(1);
+              const definitionId = definitions?.[0]?.id;
+              let inventoryId = definitionId
+                ? (await (supabase as any).from('inventory').select('id').eq('store_id', storeId).eq('product_definition_id', definitionId).limit(1)).data?.[0]?.id
+                : null;
+
+              if (!inventoryId) {
+                const { data: variants } = await (supabase as any)
+                  .from('product_variants')
+                  .select('inventory_id')
+                  .eq('sku', cleanCode)
+                  .limit(1);
+                inventoryId = variants?.[0]?.inventory_id || null;
+              }
+
+              if (inventoryId) {
+                const { data: skuProducts } = await supabase
+                  .from('inventory')
+                  .select('*')
+                  .eq('id', inventoryId)
+                  .eq('store_id', storeId)
+                  .limit(1);
+                const skuProduct = skuProducts?.[0];
+                if (skuProduct) {
+                  foundProduct = {
+                    id: skuProduct.id,
+                    productName: skuProduct.product_name,
+                    product_name: skuProduct.product_name,
+                    barcode: skuProduct.barcode,
+                    quantity: skuProduct.quantity,
+                    costPerUnit: skuProduct.cost_per_unit || 0,
+                    cost_per_unit: skuProduct.cost_per_unit || 0,
+                    retail_price: skuProduct.retail_price || 0,
+                    wholesale_price: skuProduct.wholesale_price || 0,
+                    items_per_sachet: skuProduct.items_per_sachet || 1,
+                    sachets_count: skuProduct.sachets_count || 0,
+                    loose_items: skuProduct.loose_items || 0,
+                    opened_sachets: skuProduct.opened_sachets || 0,
+                    category: skuProduct.category || "General",
+                    store_id: skuProduct.store_id,
+                    totalValue: skuProduct.total_value || 0,
+                    min_stock_level: skuProduct.min_stock_level || 5,
+                    reorder_quantity: skuProduct.reorder_quantity || 10,
+                  } as StockItem;
+                }
+              }
             }
           }
         }
