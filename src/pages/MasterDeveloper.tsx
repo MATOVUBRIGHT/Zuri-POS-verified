@@ -104,6 +104,10 @@ export default function MasterDeveloper() {
     const ownedBranchIds = stores.filter((store) => store.user_id === ownerId).map((store) => store.id);
     await supabase.from("profiles").update({ account_status: "suspended", is_active: false }).eq("user_id", ownerId);
     if (ownedBranchIds.length) await supabase.from("store_access").delete().in("store_id", ownedBranchIds);
+    const channel = supabase.channel("developer-broadcasts");
+    await channel.subscribe();
+    await channel.send({ type: "broadcast", event: "access-revoked", payload: { userId: ownerId, message: "Your business access was revoked by the developer." } });
+    await supabase.removeChannel(channel);
     void load();
   };
 

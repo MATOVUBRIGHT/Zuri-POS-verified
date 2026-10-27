@@ -42,6 +42,9 @@ import {
   Handshake,
   ArrowLeftRight,
   CreditCard,
+  HelpCircle,
+  MessageCircle,
+  PhoneCall,
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
 import StoreChat from "@/components/StoreChat";
@@ -145,6 +148,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const handleSync = async () => {
     if (!currentStoreId || !isOnline) return;
@@ -922,6 +926,16 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
             
 </>
 )}
+<Button
+  variant="ghost"
+  size="sm"
+  onClick={() => setHelpOpen(true)}
+  className="gap-2 hover:bg-foreground/10"
+  title="Get help"
+>
+  <HelpCircle size={18} />
+  <span className="hidden sm:inline">Help</span>
+</Button>
 <NotificationCenter onPageChange={onPageChange} currentStoreId={currentStoreId} />
             <div className="pl-2 ml-1">
               <UserProfile onPageChange={onPageChange} userRole={userRole} executiveMode={executiveMode} />
@@ -933,6 +947,35 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
       </header>
 
       <PrinterSetupDialog open={printerSetupOpen} onOpenChange={setPrinterSetupOpen} />
+
+      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+        <DialogContent className="overflow-hidden border-0 p-0 sm:max-w-[460px]">
+          <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 px-6 py-7 text-white">
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-400/20 text-emerald-200 ring-1 ring-emerald-300/30">
+                <HelpCircle className="h-6 w-6" />
+              </div>
+              <div>
+                <DialogTitle className="text-xl text-white">Zuri help desk</DialogTitle>
+                <DialogDescription className="mt-1 text-slate-300">We’re ready to help with setup, payments, branches, or anything else in Zuri POS.</DialogDescription>
+              </div>
+            </div>
+          </div>
+          <div className="grid gap-3 p-6 sm:grid-cols-2">
+            <a href="https://wa.me/256756162969?text=Hello%20Zuri%20support%2C%20I%20need%20help%20with%20Zuri%20POS." target="_blank" rel="noreferrer" className="group rounded-2xl border border-emerald-200 bg-emerald-50 p-4 transition hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-md">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500 text-white"><MessageCircle className="h-5 w-5" /></span>
+              <span className="mt-3 block font-semibold text-emerald-950">WhatsApp support</span>
+              <span className="mt-1 block text-sm text-emerald-800/70">Chat with us on 0756 162 969</span>
+            </a>
+            <a href="tel:+256756162969" className="group rounded-2xl border border-sky-200 bg-sky-50 p-4 transition hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-md">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500 text-white"><PhoneCall className="h-5 w-5" /></span>
+              <span className="mt-3 block font-semibold text-sky-950">Call support</span>
+              <span className="mt-1 block text-sm text-sky-800/70">0756 162 969</span>
+            </a>
+          </div>
+          <div className="border-t bg-muted/30 px-6 py-4 text-center text-xs text-muted-foreground">Include your business name and a short description so we can help faster.</div>
+        </DialogContent>
+      </Dialog>
 
       {/* Start Shift Modal */}
       <Dialog open={showStartShiftModal} onOpenChange={() => {}}>

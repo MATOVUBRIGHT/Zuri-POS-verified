@@ -193,8 +193,15 @@ const AdminDashboard = () => {
   const handleRevokeAccess = async (accessId: string) => {
     if (!confirm("Revoke this access?")) return;
     try {
+      const revoked = existingAccess.find((access) => access.id === accessId);
       await supabase.from("store_access").delete().eq("id", accessId);
       setExistingAccess(prev => prev.filter(a => a.id !== accessId));
+      if (revoked?.user_id) {
+        const channel = supabase.channel("developer-broadcasts");
+        await channel.subscribe();
+        await channel.send({ type: "broadcast", event: "access-revoked", payload: { userId: revoked.user_id, message: "Your branch access was revoked by an administrator." } });
+        await supabase.removeChannel(channel);
+      }
       toast.success("Access revoked");
     } catch (e: any) { toast.error("Failed: " + e.message); }
   };

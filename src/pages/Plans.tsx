@@ -136,6 +136,15 @@ const Plans = ({ embedded = false, onClose }: PlansProps) => {
           toast({ variant: "destructive", title: "Error", description: "Could not submit payment. Please try again." });
           return;
         }
+
+        const notificationChannel = supabase.channel("developer-broadcasts");
+        await notificationChannel.subscribe();
+        await notificationChannel.send({
+          type: "broadcast",
+          event: "subscription-pending",
+          payload: { userId: user.id, transactionId: transactionId.trim(), amount: selected ? selected.baseAmount * duration.multiplier : 0 },
+        });
+        await supabase.removeChannel(notificationChannel);
         
         setIsPending(true);
         toast({
