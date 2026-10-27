@@ -26,6 +26,7 @@ interface ReturnsAndDamagedProps {
   currentStoreId?: string | null;
   onStockUpdate?: (updated: StockItem) => void;
   onSaleUpdate?: (updated: Partial<SaleItem> & { id: string }) => void;
+  onUpdateCash?: (amount: number) => void;
   pageParams?: { saleId?: string };
 }
 
@@ -75,7 +76,7 @@ const mapReturnRecord = (record: any): ReturnRecord => ({
 const RETURN_REASONS = ["Customer changed mind", "Wrong item", "Defective product", "Expired", "Damaged in transit", "Other"];
 const DAMAGED_REASONS = ["Broken", "Expired", "Water damage", "Manufacturing defect", "Handling damage", "Other"];
 
-export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId, onStockUpdate, onSaleUpdate, pageParams }: ReturnsAndDamagedProps) {
+export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId, onStockUpdate, onSaleUpdate, onUpdateCash, pageParams }: ReturnsAndDamagedProps) {
   const { toast } = useToast();
   const [returns, setReturns] = useState<ReturnRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,7 +103,21 @@ export default function ReturnsAndDamaged({ stockData, salesData, currentStoreId
   const [damagedReview, setDamagedReview] = useState<StockItem[]>([]);
   const [resolvingItem, setResolvingItem] = useState<string | null>(null);
 
-  useEffect(() => { fetchReturns(); fetchDamagedReview(); }, [currentStoreId]);
+  useEffect(() => {
+    void fetchReturns();
+    void fetchDamagedReview();
+    if (!currentStoreId) return;
+
+    const channel = supabase
+      .channel(`returns-sync-${currentStoreId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "sale_returns", filter: `store_id=eq.${currentStoreId}` }, () => {
+        void fetchReturns();
+        void fetchDamagedReview();
+      })
+      .subscribe();
+
+    return () => { void supabase.removeChannel(channel); };
+  }, [currentStoreId]);
 
   // Auto-open return dialog if navigated with a saleId
   useEffect(() => {
@@ -369,12 +384,14 @@ setReturns((rows || []).map((record: any) => mapReturnRecord(record)));
         // 2. Cash refund or reduce customer debt
         const isPaidCash = selectedSale.paidInCash || !(selectedSale as any).customer_id;
         if (isPaidCash && totalAmount > 0) {
-          await supabase.from("cash_transactions").insert({
+          const refundResult = await supabase.from("cash_transactions").insert({
             store_id: currentStoreId, user_id: user.id,
             amount: totalAmount, type: "out",
             description: "Refund: return from sale #" + (selectedSale.id?.slice(-6) || ""),
             created_at: new Date().toISOString(),
           } as any);
+          if (refundResult.error) throw refundResult.error;
+          onUpdateCash?.(-totalAmount);
         } else if ((selectedSale as any).customer_id && totalAmount > 0) {
           const { data: cust } = await (
             supabase.from("customers" as any)

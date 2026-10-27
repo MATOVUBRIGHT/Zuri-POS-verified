@@ -167,7 +167,7 @@ const Auth = () => {
     setLoading(true);
     setIsAuthenticating(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data: signInData, error } = await supabase.auth.signInWithPassword({
         email: result.data.email,
         password: result.data.password,
       });
@@ -180,6 +180,11 @@ const Auth = () => {
           description: error.message,
         });
       } else {
+        if (signInData.user?.id) {
+          void (supabase.from("profiles") as any)
+            .update({ last_login: new Date().toISOString() })
+            .eq("user_id", signInData.user.id);
+        }
         // Keep the compact authenticating state until the direct destination
         // is resolved; the POS itself is the success confirmation.
       }

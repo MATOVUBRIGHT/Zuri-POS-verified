@@ -41,6 +41,7 @@ import {
   Banknote,
   Handshake,
   ArrowLeftRight,
+  CreditCard,
 } from "lucide-react";
 import NotificationCenter from "@/components/NotificationCenter";
 import StoreChat from "@/components/StoreChat";
@@ -460,6 +461,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
     { id: "executive-accounts", label: "Accounts", icon: Landmark },
     { id: "executive-team", label: "Team & Access", icon: Users },
     { id: "executive-reports", label: "Reports", icon: FileText },
+    { id: "executive-subscription", label: "Subscriptions", icon: CreditCard },
     { id: "resellers", label: "Resellers", icon: Handshake },
     { id: "scheduled-payments", label: "Scheduled Payments", icon: Receipt },
     // Settings is deliberately last: it is configuration, not a daily workflow.
@@ -470,6 +472,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
     // `executive-expenses` is deliberately absent: an accountant reviews and
     // approves spending, they do not submit their own expenses.
     { id: "executive-reports", label: "Reports", icon: FileText },
+    { id: "executive-subscription", label: "Subscriptions", icon: CreditCard },
     { id: "executive-accounts", label: "Accounts", icon: Landmark },
     { id: "scheduled-payments", label: "Scheduled Payments", icon: Receipt },
     { id: "tracker", label: "Tracker", icon: FileText },

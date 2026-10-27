@@ -935,7 +935,6 @@ const Settings = ({ stockData, salesData, expensesData, currentStoreId, onDataIm
           {!executive && <TabsTrigger value="business">Business</TabsTrigger>}
           <TabsTrigger value="theme">Theme</TabsTrigger>
           {!executive && <TabsTrigger value="currency">Currency</TabsTrigger>}
-          {!executive && <TabsTrigger value="finance">Finance</TabsTrigger>}
           {!executive && <TabsTrigger value="data">Data</TabsTrigger>}
           {!executive && <TabsTrigger value="storage">Storage</TabsTrigger>}
           {!executive && !branchRestricted && <TabsTrigger value="membership" className="gap-1">

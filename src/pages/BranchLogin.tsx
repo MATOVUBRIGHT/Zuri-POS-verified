@@ -14,6 +14,34 @@ type Branch = { id: string; store_name: string };
 const looksLikeUuid = (s: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s.trim());
 
+const getSafeMessage = (value: unknown) =>
+  typeof value === "string" ? value.toLowerCase() : "";
+
+const directoryMessage = (value: unknown) => {
+  const message = getSafeMessage(value);
+  if (message.includes("not found") || message.includes("invalid") || message.includes("business")) {
+    return "We could not find that business or branch. Check the ID and try again.";
+  }
+  if (message.includes("network") || message.includes("fetch") || message.includes("unavailable") || message.includes("timeout")) {
+    return "Branch sign-in is temporarily unavailable. Check your connection and try again.";
+  }
+  return "We could not load the branch list right now. Please try again in a moment.";
+};
+
+const loginMessage = (value: unknown) => {
+  const message = getSafeMessage(value);
+  if (message.includes("credential") || message.includes("password") || message.includes("username") || message.includes("unauthorized")) {
+    return "The username or password is incorrect. Check your details and try again.";
+  }
+  if (message.includes("expired") || message.includes("session") || message.includes("token")) {
+    return "This sign-in session has expired. Please start again and sign in.";
+  }
+  if (message.includes("network") || message.includes("fetch") || message.includes("unavailable") || message.includes("timeout")) {
+    return "Sign-in is temporarily unavailable. Check your connection and try again.";
+  }
+  return "We could not sign you in right now. Check your details and try again.";
+};
+
 export default function BranchLogin() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -41,36 +69,36 @@ export default function BranchLogin() {
     setBranches([]);
     setBranchId("");
 
-    const { data, error: invokeError } = await supabase.functions.invoke(
-      "branch-login-directory",
-      { body: { business_id: id } },
-    );
-
-    setLoadingDirectory(false);
-
-    if (invokeError || data?.error) {
-      return setDirectoryError(
-        data?.error || "Branch sign-in is currently unavailable or invalid ID.",
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke(
+        "branch-login-directory",
+        { body: { business_id: id } },
       );
-    }
 
-    const items = (data?.branches || []) as Branch[];
-    setBranches(items);
+      if (invokeError || data?.error) {
+        setDirectoryError(directoryMessage(data?.error || invokeError?.message));
+        return;
+      }
 
-    if (items.length === 0) {
-      setDirectoryError("No branch found for this ID. Check the ID and try again.");
-      return;
-    }
+      const items = (data?.branches || []) as Branch[];
+      setBranches(items);
 
-    if (linkedBranchId) {
-      const linked = items.find((item) => item.id === linkedBranchId);
-      setBranchId(linked?.id || "");
-      if (!linked)
-        setDirectoryError(
-          "This branch sign-in link is invalid or the branch is no longer active.",
-        );
-    } else {
-      setBranchId(items[0]?.id || "");
+      if (items.length === 0) {
+        setDirectoryError("We could not find a branch for that ID. Check it and try again.");
+        return;
+      }
+
+      if (linkedBranchId) {
+        const linked = items.find((item) => item.id === linkedBranchId);
+        setBranchId(linked?.id || "");
+        if (!linked) setDirectoryError("This branch sign-in link is no longer active. Ask your executive for a new link.");
+      } else {
+        setBranchId(items[0]?.id || "");
+      }
+    } catch {
+      setDirectoryError(directoryMessage("unavailable"));
+    } finally {
+      setLoadingDirectory(false);
     }
   };
 
@@ -83,6 +111,14 @@ export default function BranchLogin() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId]);
 
+  useEffect(() => {
+    if (linkedBranchId) {
+      void loadDirectory(linkedBranchId);
+    }
+    // The URL branch is fixed for the lifetime of this sign-in page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedBranchId]);
+
   const branch = branches.find((item) => item.id === branchId);
 
   const submit = async (event: React.FormEvent) => {
@@ -91,28 +127,37 @@ export default function BranchLogin() {
     setError("");
     setLoading(true);
 
-    const { data, error: invokeError } = await supabase.functions.invoke("branch-login", {
-      body: { store_id: linkedBranchId || branchId, username, password },
-    });
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke("branch-login", {
+        body: { store_id: linkedBranchId || branchId, username, password },
+      });
 
-    if (invokeError || data?.error) {
-      setError(data?.error || invokeError?.message || "Unable to sign in. Please try again.");
+      if (invokeError || data?.error) {
+        setError(loginMessage(data?.error || invokeError?.message));
+        return;
+      }
+
+      if (!data?.access_token || !data?.refresh_token || !data?.store_id) {
+        setError("We could not complete sign-in. Please try again.");
+        return;
+      }
+
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+      });
+
+      if (sessionError) {
+        setError(loginMessage("session"));
+        return;
+      }
+
+      navigate(`/pos/${data.store_id}`, { replace: true });
+    } catch {
+      setError(loginMessage("unavailable"));
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const { error: sessionError } = await supabase.auth.setSession({
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-    });
-
-    if (sessionError) {
-      setError("Your sign-in succeeded but the session could not be opened. Please try again.");
-      setLoading(false);
-      return;
-    }
-
-    navigate(`/pos/${data.store_id}`, { replace: true });
   };
 
   return (
@@ -176,7 +221,11 @@ export default function BranchLogin() {
             )}
 
             {directoryError && (
-              <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+              <div
+                role="alert"
+                aria-live="assertive"
+                className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"
+              >
                 {directoryError}
               </div>
             )}

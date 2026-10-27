@@ -10,21 +10,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useSubscription } from "@/providers/SubscriptionProvider";
 
-const Plans = () => {
+export type PlansProps = { embedded?: boolean; onClose?: () => void };
+
+const Plans = ({ embedded = false, onClose }: PlansProps) => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
+  const [selectedDuration, setSelectedDuration] = useState("monthly");
   const [transactionId, setTransactionId] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPending, setIsPending] = useState(false);
   const [user, setUser] = useState<import("@supabase/supabase-js").User | null>(null);
-  const { subscription, refreshSubscription } = useSubscription();
-
-  useEffect(() => {
-    if (subscription?.status === 'active') {
-      navigate("/", { replace: true });
-    }
-  }, [subscription, navigate]);
+  const { refreshSubscription } = useSubscription();
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -61,7 +58,19 @@ const Plans = () => {
     }
   };
 
-  const handleSelectPlan = async (planName: string) => {
+  const durations = [
+    { key: "monthly", label: "Monthly", months: 1, multiplier: 1, saving: "Flexible" },
+    { key: "quarterly", label: "3 months", months: 3, multiplier: 2.85, saving: "Save 5%" },
+    { key: "half-year", label: "6 months", months: 6, multiplier: 5.4, saving: "Save 10%" },
+    { key: "yearly", label: "1 year", months: 12, multiplier: 10, saving: "Save 17%" },
+    { key: "two-year", label: "2 years", months: 24, multiplier: 18, saving: "Save 25%" },
+  ] as const;
+
+  const getDuration = () => durations.find((duration) => duration.key === selectedDuration) || durations[0];
+  const getPlan = (planName: string) => plans.find((plan) => plan.name === planName);
+  const formatAmount = (amount: number) => `${getCurrencySymbol()} ${Math.round(amount).toLocaleString()}`;
+
+  const handleSelectPlan = async (planName: string, durationKey = "monthly") => {
     if (planName === "Basic" && user) {
       // Create a 7-day free trial subscription
       const expiresAt = new Date();
@@ -89,6 +98,7 @@ const Plans = () => {
       await refreshSubscription();
       navigate("/", { replace: true });
     } else {
+      setSelectedDuration(durationKey);
       setSelectedPlan(planName);
     }
   };
@@ -109,14 +119,16 @@ const Plans = () => {
     try {
       if (user) {
         // Create a pending subscription record server-side
+        const duration = getDuration();
+        const selected = getPlan(selectedPlan || "");
         const expiresAt = new Date();
-        expiresAt.setMonth(expiresAt.getMonth() + 1); // Default 1 month, admin adjusts
+        expiresAt.setMonth(expiresAt.getMonth() + duration.months);
         
         const { error } = await supabase.from('user_subscriptions').insert({
           user_id: user.id,
           status: 'pending',
           expires_at: expiresAt.toISOString(),
-          amount_paid: 0,
+          amount_paid: selected ? selected.baseAmount * duration.multiplier : 0,
           payment_reference: transactionId.trim(),
         });
 
@@ -146,12 +158,14 @@ const Plans = () => {
     {
       name: "Basic",
       price: "Free",
+      baseAmount: 0,
       description: "Perfect for getting started with your small shop.",
       features: ["Up to 50 products", "Basic reporting", "1 store location", "Email support"],
     },
     {
       name: "Pro",
       price: `${getCurrencySymbol()} 100,000`,
+      baseAmount: 100000,
       description: "Everything you need to grow your business.",
       features: ["Unlimited products", "Advanced analytics", "Up to 3 store locations", "Priority support"],
       popular: true,
@@ -159,6 +173,7 @@ const Plans = () => {
     {
       name: "Enterprise",
       price: `${getCurrencySymbol()} 350,000`,
+      baseAmount: 350000,
       description: "Advanced features for large scale operations.",
       features: ["Unlimited everything", "Custom reporting", "Unlimited locations", "Dedicated account manager"],
     },
@@ -166,9 +181,9 @@ const Plans = () => {
 
   if (isPending) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+      <div className="min-h-screen overflow-y-auto bg-background px-4 py-8 pb-20 sm:px-6">
         <div className="max-w-md w-full space-y-4">
-          <Card className="text-center shadow-md">
+          <Card className="border-slate-200 text-center shadow-none">
             <CardHeader>
               <div className="mx-auto bg-warning/10 w-16 h-16 rounded-full flex items-center justify-center mb-4">
                 <Clock className="h-8 w-8 text-warning" />
@@ -217,19 +232,41 @@ const Plans = () => {
 
   if (selectedPlan) {
     return (
-      <div className="min-h-screen bg-background py-12 px-4 sm:px-6 lg:px-8">
+      <div className="min-h-screen overflow-y-auto bg-background px-4 py-8 pb-20 sm:px-6 lg:px-8">
         <div className="max-w-md mx-auto">
           <Button variant="ghost" className="mb-6" onClick={() => setSelectedPlan(null)}>
             ← Back to Plans
           </Button>
-          <Card className="border-primary shadow-lg">
+          <Card className="border-slate-200 shadow-none">
             <CardHeader className="text-center bg-sidebar-dark text-sidebar-dark-foreground rounded-t-lg">
               <CardTitle className="text-2xl">Complete Payment</CardTitle>
               <CardDescription className="text-sidebar-dark-foreground/70">
-                Plan: {selectedPlan} ({plans.find(p => p.name === selectedPlan)?.price})
+                Plan: {selectedPlan} · {getDuration().label} ({formatAmount((getPlan(selectedPlan)?.baseAmount || 0) * getDuration().multiplier)})
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-6 space-y-6">
+              <div className="space-y-3">
+                <div>
+                  <p className="font-semibold">Choose your license term</p>
+                  <p className="text-xs text-muted-foreground">One business subscription covers all your branches.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  {durations.map((duration) => (
+                    <button
+                      key={duration.key}
+                      type="button"
+                      onClick={() => setSelectedDuration(duration.key)}
+                      className={`rounded-lg border px-2 py-3 text-center text-xs transition ${selectedDuration === duration.key ? "border-primary bg-primary/10 text-primary ring-2 ring-primary/20" : "border-border hover:border-primary/50"}`}
+                    >
+                      <span className="block font-semibold">{duration.label}</span>
+                      <span className="mt-1 block text-[10px] text-muted-foreground">{duration.saving}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="rounded-lg bg-muted p-3 text-sm">
+                  Total to pay: <span className="font-bold">{formatAmount((getPlan(selectedPlan)?.baseAmount || 0) * getDuration().multiplier)}</span>
+                </div>
+              </div>
               <div className="space-y-4">
                 <div className="flex items-center p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
                   <Phone className="h-5 w-5 text-destructive mr-3" />
@@ -283,13 +320,15 @@ const Plans = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen overflow-y-auto bg-background px-4 py-8 pb-20 sm:px-6 lg:px-8">
       <div className="max-w-7xl mx-auto">
-        <div className="flex justify-end mb-4">
-          <Button variant="outline" size="sm" onClick={handleLogout}>
-            <LogOut className="h-4 w-4 mr-2" />
-            Login in another account
-          </Button>
+        <div className="mb-8 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Business subscription</p>
+            <p className="mt-1 text-sm text-muted-foreground">Choose a plan for your branches and operating pace.</p>
+          </div>
+          {!embedded && <Button variant="outline" size="sm" onClick={handleLogout}><LogOut className="mr-2 h-4 w-4" />Login in another account</Button>}
+          {embedded && onClose && <Button variant="outline" size="sm" onClick={onClose}>Back to subscription</Button>}
         </div>
         
         <div className="text-center mb-12">
@@ -303,7 +342,7 @@ const Plans = () => {
 
         <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
           {plans.map((plan) => (
-            <Card key={plan.name} className={`relative flex flex-col ${plan.popular ? 'border-primary shadow-lg scale-105 z-10' : 'border-border'}`}>
+            <Card key={plan.name} className={`relative flex min-h-[430px] flex-col border-slate-200 bg-white shadow-none ${plan.popular ? 'border-primary' : ''}`}>
               {plan.popular && (
                 <div className="absolute top-0 right-0 -translate-y-1/2 translate-x-1/2 bg-primary text-primary-foreground px-3 py-1 rounded-full text-sm font-semibold">
                   Most Popular
@@ -341,7 +380,7 @@ const Plans = () => {
         </div>
         
         <div className="mt-12 text-center">
-          <Button variant="link" className="text-muted-foreground/60" onClick={() => navigate("/auth")}>
+          <Button variant="link" className="text-muted-foreground/60" onClick={() => embedded && onClose ? onClose() : navigate("/auth")}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to login
           </Button>

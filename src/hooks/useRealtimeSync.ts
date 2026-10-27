@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { BALANCES_KEY } from "@/hooks/usePaymentAccounts";
 import { POLLED_TABLES, WATCHED_TABLES } from "@/lib/watchedTables";
 import { automaticSyncIntervalMs, shouldRunAutomaticSync } from "@/lib/syncLimits";
+import { optimizedCache } from "@/lib/optimizedCache";
 
 // Realtime is the primary path. When the socket is unavailable we fall back to
 // polling, but only for high-churn tables, only while the tab is visible, and on
@@ -80,11 +81,15 @@ export function useRealtimeSync(storeId: string | null) {
             pendingTablesRef.current.clear();
             invalidateTimerRef.current = null;
             changedTables.forEach((changedTable) => {
-              queryClient.invalidateQueries({ queryKey: [changedTable, storeId] });
-              queryClient.invalidateQueries({ queryKey: [changedTable] });
-              if (changedTable === "payment_account_ledger") {
-                queryClient.invalidateQueries({ queryKey: [BALANCES_KEY, storeId] });
-              }
+              // The query refetch must not receive the previous result from the
+              // optimized memory/IndexedDB cache after a database change.
+              void optimizedCache.invalidate(`${changedTable}:${storeId}`).then(() => {
+                void queryClient.invalidateQueries({ queryKey: [changedTable, storeId] });
+                void queryClient.invalidateQueries({ queryKey: [changedTable] });
+                if (changedTable === "payment_account_ledger") {
+                  void queryClient.invalidateQueries({ queryKey: [BALANCES_KEY, storeId] });
+                }
+              });
             });
           }, 180);
         }

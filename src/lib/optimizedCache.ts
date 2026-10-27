@@ -147,7 +147,7 @@ class OptimizedCache {
   }
 
   // Invalidate cache entries
-  invalidate(keyPattern: string) {
+  async invalidate(keyPattern: string): Promise<void> {
     // Memory cache
     for (const key of this.memoryCache.keys()) {
       if (key.includes(keyPattern)) {
@@ -157,11 +157,12 @@ class OptimizedCache {
     
     // Persistent cache invalidation. The IndexedDB layer stores the full key,
     // so remove every matching entry rather than only an exact key.
-    void cache.keys().then((keys) => Promise.all(
+    const keys = await cache.keys();
+    await Promise.all(
       keys
         .filter((key) => key.includes(keyPattern))
         .map((key) => cache.invalidate(key)),
-    ));
+    );
   }
 
   // Get cache stats for performance monitoring

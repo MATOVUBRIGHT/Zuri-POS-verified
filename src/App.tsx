@@ -14,6 +14,7 @@ import { ShiftProvider, useShift } from "@/providers/ShiftProvider";
 import { SubscriptionProvider, useSubscription } from "@/providers/SubscriptionProvider";
 import { PageLoader } from "@/components/ui/loading-spinner";
 import { startupOptimizer } from "./lib/startupOptimizer";
+import { DeveloperBroadcastListener } from "@/components/DeveloperBroadcastListener";
 
 // Lazy loading for all routes to improve initial load time
 const Index = lazy(() => import("./pages/Index"));
@@ -29,6 +30,7 @@ const AdminPortalHome = lazy(() => import("./pages/AdminPortalHome"));
 const AdminPortalPayments = lazy(() => import("./pages/AdminPortalPayments"));
 const AdminPortalModeration = lazy(() => import("./pages/AdminPortalModeration"));
 const MasterDeveloper = lazy(() => import("./pages/MasterDeveloper"));
+const DeveloperAccess = lazy(() => import("./pages/DeveloperAccess"));
 const BranchPos = lazy(() => import("./pages/BranchPos"));
 const BranchLogin = lazy(() => import("./pages/BranchLogin"));
 const MobileAction = lazy(() => import("./pages/MobileAction"));
@@ -110,6 +112,7 @@ const AppWithSubscription = ({ children }: { children: React.ReactNode }) => {
   return (
     <SubscriptionProvider userId={user?.id || null}>
       {children}
+      <DeveloperBroadcastListener />
     </SubscriptionProvider>
   );
 };
@@ -158,6 +161,9 @@ const shouldUseAuthShell = (pathname: string) => {
   if (pathname.startsWith("/pos/")) return true;
   if (pathname.startsWith("/admin-portal")) return true;
   if (pathname.startsWith("/master-developer")) return true;
+  if (pathname.startsWith("/portal")) return true;
+  if (pathname.startsWith("/developer.portal")) return true;
+  if (pathname.startsWith("/developer")) return true;
   if (pathname.startsWith("/plans")) return true;
   return false;
 };
@@ -178,6 +184,9 @@ const AppRoutes = () => {
           <Route path="moderation" element={<AdminPortalModeration />} />
         </Route>
         <Route path="/master-developer" element={<AuthShiftGuard><MasterDeveloper /></AuthShiftGuard>} />
+        <Route path="/portal" element={<AuthShiftGuard><MasterDeveloper /></AuthShiftGuard>} />
+        <Route path="/developer.portal" element={<AuthShiftGuard><MasterDeveloper /></AuthShiftGuard>} />
+        <Route path="/developer" element={<DeveloperAccess />} />
         {/* Temporary loader demo route */}
         <Route path="/loader-demo" element={<LoaderDemo />} />
         {/* Main app routes - require subscription */}

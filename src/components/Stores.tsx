@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { PageLoader, useMinimumLoading } from "@/components/ui/loading-spinner";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -6,12 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Store as StoreIcon, Plus, Trash2, Building2, Link2, Loader2, RefreshCcw, Lock, LockOpen, Eye,   EyeOff, KeyRound } from "lucide-react";
+import { Store as StoreIcon, Plus, Trash2, Building2, Link2, Loader2, RefreshCcw, Lock, LockOpen, Eye, EyeOff, KeyRound, CreditCard } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import Reports from "./Reports";
 
 import { Store, SaleItem, StockItem, ExpenseItem, Product } from "@/types";
+import { useSubscription } from "@/providers/SubscriptionProvider";
 
 interface StoresProps {
   currentStoreId: string | null;
@@ -21,10 +23,13 @@ interface StoresProps {
 
 const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const { subscription, isTrialActive } = useSubscription();
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
   const showLoader = useMinimumLoading(loading, 350);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [showSubscriptionPrompt, setShowSubscriptionPrompt] = useState(false);
   const [isLinkDialogOpen, setIsLinkDialogOpen] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [newStoreName, setNewStoreName] = useState("");
@@ -61,6 +66,8 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
     expensesData: ExpenseItem[];
   }[]>([]);
   const hasFetched = useRef(false);
+  const hasPaidBranchPlan = subscription?.status === "active" && !isTrialActive;
+  const requiresPaidBranchPlan = stores.length > 0 && !hasPaidBranchPlan;
 
   // Persistently remember stores the user chose to unlink to avoid reappearing due to eventual consistency
   const getUnlinkedStoreIds = (): Set<string> => {
@@ -264,6 +271,11 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
   };
 
   const createStore = async () => {
+    if (requiresPaidBranchPlan) {
+      setIsCreateDialogOpen(false);
+      setShowSubscriptionPrompt(true);
+      return;
+    }
     if (!newStoreName.trim()) {
       toast({ variant: "destructive", title: "Error", description: "Please enter a store name" });
       return;
@@ -350,7 +362,12 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
 
   // Link store by store ID - password required if store has one set
   const handleLinkStore = async () => {
-    if (!linkStoreId.trim()) {
+    const normalizedStoreId = linkStoreId
+      .trim()
+      .replace(/^.*(?:store|branch)[=/:]/i, "")
+      .split(/[?#\s]/)[0]
+      .trim();
+    if (!normalizedStoreId) {
       toast({ title: "Error", description: "Please enter a store ID", variant: "destructive" });
       return;
     }
@@ -358,21 +375,17 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
     setLinking(true);
     try {
       const { data, error } = await supabase.functions.invoke('link-store', {
-        body: { store_id: linkStoreId.trim(), password: linkPassword.trim() || undefined },
+        body: { store_id: normalizedStoreId, password: linkPassword.trim() || undefined },
       });
 
-      if (error) throw new Error("Failed to link store. Please try again.");
-
-      if (data?.error) {
-        // Store requires a password — show the password field
-        if (data.requires_password) {
-          setLinkRequiresPassword(true);
-          toast({ title: "Password required", description: data.error, variant: "destructive" });
-          setLinking(false);
-          return;
-        }
-        throw new Error(data.error);
+      // Supabase Functions returns non-2xx responses in `error`, even when
+      // the JSON body contains the actionable password prompt.
+      if (data?.requires_password) {
+        setLinkRequiresPassword(true);
+        toast({ title: "Password required", description: data.error || "Enter the branch password to continue." });
+        return;
       }
+      if (error || data?.error) throw new Error(data?.error || error?.message || "Failed to link store.");
 
       toast({ title: "Success", description: `Linked to "${data.store_name}". View reports below.`, variant: "success" });
       if (data?.id) removeUnlinkedStoreId(data.id);
@@ -532,12 +545,18 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
           {/* Create Store Dialog */}
           <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2">
+              <Button className="gap-2" onClick={() => {
+                if (requiresPaidBranchPlan) {
+                  setShowSubscriptionPrompt(true);
+                } else {
+                  setIsCreateDialogOpen(true);
+                }
+              }}>
                 <Plus className="h-4 w-4" />
                 Create Store
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-w-md border-slate-200">
               <DialogHeader>
                 <DialogTitle>Create New Store</DialogTitle>
                 <DialogDescription>
@@ -590,6 +609,26 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
             </DialogContent>
           </Dialog>
 
+          <Dialog open={showSubscriptionPrompt} onOpenChange={setShowSubscriptionPrompt}>
+            <DialogContent className="max-w-md border-slate-200">
+              <DialogHeader>
+                <DialogTitle>Add another branch</DialogTitle>
+                <DialogDescription>
+                  A paid business license is required before you can create and use another branch.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                Choose a plan to continue. You can return here after approval.
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowSubscriptionPrompt(false)}>Cancel</Button>
+                <Button onClick={() => { setShowSubscriptionPrompt(false); navigate("/plans", { state: { from: "/", reason: "additional_branch" } }); }}>
+                  View plans
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           <Dialog open={isLinkDialogOpen} onOpenChange={(open) => { setIsLinkDialogOpen(open); if (!open) { setLinkRequiresPassword(false); setLinkPassword(""); setLinkStoreId(""); } }}>
             <DialogTrigger asChild>
               <Button variant="outline" className="gap-2">
@@ -597,7 +636,7 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
                 Link Store
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-w-md border-slate-200">
               <DialogHeader>
                 <DialogTitle>Link Another Store</DialogTitle>
                 <DialogDescription>
@@ -668,7 +707,7 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
         </div>
         
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-2xl mt-8">
-          <Card className="hover:border-primary/50 transition-colors cursor-pointer group" onClick={() => {
+          <Card className="border-slate-200 bg-white shadow-none transition-colors hover:border-primary/50 cursor-pointer group" onClick={() => {
             navigator.clipboard.writeText(currentStoreId || "");
             toast({ title: "Copied!", description: "Branch ID copied to clipboard. Share this with other branches." });
           }}>
@@ -683,7 +722,7 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
             </CardContent>
           </Card>
           
-          <Card className="hover:border-primary/50 transition-colors cursor-pointer group" onClick={() => setIsLinkDialogOpen(true)}>
+          <Card className="border-slate-200 bg-white shadow-none transition-colors hover:border-primary/50 cursor-pointer group" onClick={() => setIsLinkDialogOpen(true)}>
             <CardContent className="flex flex-col items-center justify-center p-6 space-y-4 h-full">
               <div className="p-3 bg-primary/10 rounded-full group-hover:scale-110 transition-transform">
                 <Link2 className="h-6 w-6 text-primary" />
@@ -695,7 +734,7 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
             </CardContent>
           </Card>
 
-          <Card className="hover:border-primary/50 transition-colors flex items-center justify-center group overflow-hidden relative">
+          <Card className="border-slate-200 bg-white shadow-none transition-colors hover:border-primary/50 flex items-center justify-center group overflow-hidden relative">
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10 bg-background/50 backdrop-blur-[1px]">
                <p className="text-sm font-semibold pointer-events-none text-center px-2">Open Chat from Top Bar</p>
             </div>
@@ -713,7 +752,7 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
       </div>
 {/* Open Store Password Prompt */}
       <Dialog open={!!openStoreTarget} onOpenChange={(open) => { if (!open) { setOpenStoreTarget(null); setOpenStorePw(""); setOpenStorePwError(""); setShowOpenStorePw(false); } }}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm border-slate-200">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Lock className="h-5 w-5 text-amber-600" />
@@ -762,7 +801,7 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
 
       {/* Store Password Management Dialog */}
       <Dialog open={showPwDialog} onOpenChange={(open) => { setShowPwDialog(open); if (!open) { setPwDialogValue(""); setPwDialogConfirm(""); setPwDialogError(""); setShowPwDialogValue(false); setShowPwDialogConfirm(false); setPwDialogStoreId(null); } }}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm border-slate-200">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <KeyRound className="h-5 w-5 text-primary" />

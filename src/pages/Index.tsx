@@ -28,6 +28,7 @@ const AdminDashboard = lazy(() => import("@/components/AdminDashboard"));
 const CashManagement = lazy(() => import("@/components/CashManagement"));
 const RoleDashboards = lazy(() => import("@/components/RoleDashboards"));
 const ExecutiveWorkspace = lazy(() => import("@/components/ExecutiveWorkspace"));
+const ExecutiveSubscription = lazy(() => import("@/components/ExecutiveSubscription"));
 const ExecutiveLayout = lazy(() => import("@/components/ExecutiveLayout"));
 const ExecutiveTeamAccess = lazy(() => import("@/components/ExecutiveTeamAccess"));
 const PaymentAccounts = lazy(() => import("@/components/PaymentAccounts"));
@@ -42,6 +43,7 @@ import { StockItem, SaleItem, ExpenseItem, Product, Category, Staff } from "@/ty
 import { useOptimizedInventory, useOptimizedSales, useOptimizedExpenses, useOptimizedCashTransactions } from "@/hooks/useOptimizedData";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRealtimeSync, useVisibilityRefresh } from "@/hooks/useRealtimeSync";
+import { optimizedCache } from "@/lib/optimizedCache";
 import { parseAnyDateToLocalDate, saleDateToLocalKey, startOfLocalDay, endOfLocalDay, toLocalDateKey } from "@/lib/date";
 import { LoadingSpinner, PageLoader } from "@/components/ui/loading-spinner";
 import { cache, CACHE_KEYS } from "@/lib/cache";
@@ -81,7 +83,7 @@ type ResolvedWorkspaceRole = "owner" | "boss" | "accountant" | "admin" | null;
 const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: string } = {}) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { refreshShift } = useShift();
+  const { refreshShift, store } = useShift();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isLoading, setIsLoading] = useState(false); // no blocking spinner
@@ -117,7 +119,7 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
   // An owner/boss deliberately entering /pos/:storeId from Executive keeps the
   // full POS navigation. Page grants are for direct branch-staff logins only.
   const hasExecutivePosAccess = Boolean(posStoreId && (isExecutiveUser || isAdmin));
-  const executivePages = new Set(["boss-dashboard", "accountant-dashboard", "executive-branches", "executive-finance", "executive-expenses", "executive-accounts", "executive-team", "executive-reports", "executive-settings", "scheduled-payments", "resellers"]);
+  const executivePages = new Set(["boss-dashboard", "accountant-dashboard", "executive-branches", "executive-finance", "executive-expenses", "executive-accounts", "executive-team", "executive-reports", "executive-subscription", "executive-settings", "scheduled-payments", "resellers"]);
   const executivePage = executivePages.has(currentPage) ? currentPage : resolvedWorkspaceRole === "accountant" ? "accountant-dashboard" : "boss-dashboard";
 
   const handlePageChange = (page: string, params?: unknown) => {
@@ -162,8 +164,12 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
     setCurrentStoreId(posStoreId);
     setCurrentPage("dashboard");
     setPageParams(null);
-    void refreshShift();
-  }, [posStoreId, refreshShift, setCurrentPage, setCurrentStoreId, setPageParams]);
+    // ShiftProvider already loaded this route in the common case. Refresh when
+    // entering a different branch from the executive workspace or another POS.
+    if (store?.id !== posStoreId) {
+      void refreshShift();
+    }
+  }, [posStoreId, refreshShift, setCurrentPage, setCurrentStoreId, setPageParams, store?.id]);
 
   // QR/app links can request the Products workspace after authentication.
   // Consume the query once so a refresh does not keep reapplying the request.
@@ -628,15 +634,11 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
             savedColorScheme,
           );
 
-          // Auto-select first store after session is established
-          const { data: ownedStores, error: ownedError } = await supabase
-            .from("stores")
-            .select("id, store_name")
-            .eq("user_id", session.user.id)
-            .order("created_at", { ascending: true });
-
-          if (!posStoreId && !ownedError && ownedStores && ownedStores.length > 0) {
-            setCurrentStoreId(ownedStores[0].id);
+          // Reuse the ownership/access result above instead of issuing a
+          // second stores query during every login.
+          if (!posStoreId) {
+            const firstStoreId = ownedStoresResult.data?.[0]?.id || accessResult.data?.[0]?.store_id;
+            if (firstStoreId) setCurrentStoreId(firstStoreId);
           }
         } catch (error) {
           console.error("Unexpected error during session check:", error);
@@ -712,53 +714,13 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
   }, [navigate, userId]);
 
 
-  // Auto-select first OWNED store when user logs in (dashboard only shows owned stores)
-  useEffect(() => {
-    if (!userId || currentStoreId || posStoreId) return;
-
-    const selectFirstStore = async () => {
-      try {
-        // Only get user's OWNED stores for dashboard
-        const { data: ownedStores, error: ownedError } = await supabase
-          .from("stores")
-          .select("id, store_name, user_id")
-          .eq("user_id", userId)
-          .order("created_at", { ascending: true });
-
-        if (ownedError) {
-          console.error("Error fetching owned stores:", ownedError);
-        }
-
-        if (ownedStores && ownedStores.length > 0) {
-          setCurrentStoreId(ownedStores[0].id);
-          // Ownership always receives the executive owner workspace. Boss is a
-          // branch assignment, not a global role RPC, for backwards-compatible
-          // deployments where app_role does not contain `boss`.
-          setUserRole("owner");
-        } else {
-          // Check access for shared stores if no owned stores
-          const { data: accessData } = await supabase
-            .from("store_access")
-            .select("store_id, role")
-            .eq("user_id", userId)
-            .limit(1);
-
-          if (accessData && accessData.length > 0) {
-            setCurrentStoreId(accessData[0].store_id);
-            const role = accessData[0].role;
-            setUserRole(role);
-          }
-        }
-      } catch (error) {
-        console.error("Error selecting first store:", error);
-      }
-    };
-
-    selectFirstStore();
-  }, [userId, currentStoreId, posStoreId]);
-
   // Refresh data from Supabase
   const refreshData = useCallback(async () => {
+    if (currentStoreId) {
+      await Promise.all(["inventory", "sales", "expenses", "cash_transactions"].map((table) =>
+        optimizedCache.invalidate(`${table}:${currentStoreId}`),
+      ));
+    }
     queryClient.invalidateQueries({ queryKey: ['inventory'] });
     queryClient.invalidateQueries({ queryKey: ['sales'] });
     queryClient.invalidateQueries({ queryKey: ['expenses'] });
@@ -785,7 +747,9 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
           filter: `store_id=eq.${currentStoreId}`
         },
         () => {
-          queryClient.invalidateQueries({ queryKey: ['inventory', currentStoreId] });
+          void optimizedCache.invalidate(`inventory:${currentStoreId}`).then(() => {
+            void queryClient.invalidateQueries({ queryKey: ['inventory', currentStoreId] });
+          });
         }
       )
       .on(
@@ -797,7 +761,9 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
           filter: `store_id=eq.${currentStoreId}`
         },
         () => {
-          queryClient.invalidateQueries({ queryKey: ['sales', currentStoreId] });
+          void optimizedCache.invalidate(`sales:${currentStoreId}`).then(() => {
+            void queryClient.invalidateQueries({ queryKey: ['sales', currentStoreId] });
+          });
         }
       )
       .on(
@@ -809,7 +775,9 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
           filter: `store_id=eq.${currentStoreId}`
         },
         () => {
-          queryClient.invalidateQueries({ queryKey: ['expenses', currentStoreId] });
+          void optimizedCache.invalidate(`expenses:${currentStoreId}`).then(() => {
+            void queryClient.invalidateQueries({ queryKey: ['expenses', currentStoreId] });
+          });
         }
       )
       .on(
@@ -821,7 +789,9 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
           filter: `store_id=eq.${currentStoreId}`
         },
         () => {
-          queryClient.invalidateQueries({ queryKey: ['cash_transactions', currentStoreId] });
+          void optimizedCache.invalidate(`cash_transactions:${currentStoreId}`).then(() => {
+            void queryClient.invalidateQueries({ queryKey: ['cash_transactions', currentStoreId] });
+          });
         }
       )
       .on(
@@ -1142,6 +1112,12 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
               />
             </Suspense>
           );
+        case "executive-subscription":
+          return (
+            <Suspense fallback={<LoadingSpinner size="lg" />}>
+              <ExecutiveSubscription userId={userId} />
+            </Suspense>
+          );
         case "executive-settings":
           return (
             <Suspense fallback={<LoadingSpinner size="lg" />}>
@@ -1258,6 +1234,7 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
                 setSalesData(prev => prev.map(s => s.id === updatedSale.id ? { ...s, ...updatedSale } : s));
                 void refreshData();
               }}
+              onUpdateCash={handleUpdateCash}
               pageParams={pageParams as any}
             />
           </Suspense>

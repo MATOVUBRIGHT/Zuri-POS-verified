@@ -123,7 +123,7 @@ export function useOptimizedSales(storeId: string | null, userId: string | null)
                     return await dataSyncService.getDataWithLocalFirst(`sales:${storeId}`, async () => {
                         const { data, error } = await supabase
                             .from('sales')
-                            .select('*')
+                            .select('id, store_id, customer_name, date_of_sale, total_amount, paid_in_cash, products, staff_id, payment_method_id, payment_details')
                             .eq('store_id', storeId)
                             .order('date_of_sale', { ascending: false })
                             .limit(2000); // Reduced limit for faster loading
@@ -160,24 +160,27 @@ export function useOptimizedExpenses(storeId: string | null, userId: string | nu
         queryKey: ['expenses', storeId],
         queryFn: async () => {
             if (!storeId) return [];
-            return await dataSyncService.getDataWithLocalFirst(`expenses:${storeId}`, async () => {
-                const { data, error } = await supabase
-                    .from('expenses')
-                    .select('*')
-                    .eq('store_id', storeId)
-                    .order('date_of_expense', { ascending: false })
-                    .limit(2000); // Reduced limit for performance
-                if (error) throw error;
-                const rows = data || [];
-                const userIds = [...new Set(rows.map((row: any) => row.user_id).filter(Boolean))];
-                if (userIds.length === 0) return rows;
-                const { data: profiles } = await supabase
-                    .from('profiles')
-                    .select('user_id, full_name')
-                    .in('user_id', userIds);
-                const names = new Map((profiles || []).map((profile: any) => [profile.user_id, profile.full_name]));
-                return rows.map((row: any) => ({ ...row, created_by_name: names.get(row.user_id) || null }));
-            });
+            return await optimizedCache.get(`expenses:${storeId}:enhanced`, async () =>
+                dataSyncService.getDataWithLocalFirst(`expenses:${storeId}`, async () => {
+                    const { data, error } = await supabase
+                        .from('expenses')
+                        .select('id, store_id, user_id, description, amount, category, date_of_expense, payment_method, created_at')
+                        .eq('store_id', storeId)
+                        .order('date_of_expense', { ascending: false })
+                        .limit(2000);
+                    if (error) throw error;
+                    const rows = data || [];
+                    const userIds = [...new Set(rows.map((row: any) => row.user_id).filter(Boolean))];
+                    if (userIds.length === 0) return rows;
+                    const { data: profiles } = await supabase
+                        .from('profiles')
+                        .select('user_id, full_name')
+                        .in('user_id', userIds);
+                    const names = new Map((profiles || []).map((profile: any) => [profile.user_id, profile.full_name]));
+                    return rows.map((row: any) => ({ ...row, created_by_name: names.get(row.user_id) || null }));
+                }),
+                { ttl: 15 * 60 * 1000, staleWhileRevalidate: true, priority: 'normal' }
+            );
         },
         enabled: !!storeId && !!userId,
         staleTime: 1000 * 60 * 15,   // 15 min - expenses change less frequently
@@ -225,15 +228,19 @@ export function useOptimizedCashTransactions(storeId: string | null, userId: str
         queryKey: ['cash_transactions', storeId],
         queryFn: async () => {
             if (!storeId) return [];
-            return await dataSyncService.getDataWithLocalFirst(`cash_transactions:${storeId}`, async () => {
-                const { data, error } = await supabase
-                    .from('cash_transactions')
-                    .select('*')
-                    .eq('store_id', storeId)
-                    .limit(10000);
-                if (error) throw error;
-                return data || [];
-            });
+            return await optimizedCache.get(`cash_transactions:${storeId}:enhanced`, async () =>
+                dataSyncService.getDataWithLocalFirst(`cash_transactions:${storeId}`, async () => {
+                    const { data, error } = await supabase
+                        .from('cash_transactions')
+                        .select('id, store_id, type, amount, created_at')
+                        .eq('store_id', storeId)
+                        .order('created_at', { ascending: false })
+                        .limit(10000);
+                    if (error) throw error;
+                    return data || [];
+                }),
+                { ttl: 30 * 1000, staleWhileRevalidate: true, priority: 'normal' }
+            );
         },
         enabled: !!storeId && !!userId,
         staleTime: 1000 * 30,
@@ -359,7 +366,12 @@ export function useAddSaleOptimistic() {
             }
             return result;
         },
-        onSettled: (data, error, variables: SaleInput) => {
+        onSettled: async (data, error, variables: SaleInput) => {
+            await Promise.all([
+                optimizedCache.invalidate(`sales:${variables.store_id}`),
+                optimizedCache.invalidate(`inventory:${variables.store_id}`),
+                optimizedCache.invalidate(`cash_transactions:${variables.store_id}`),
+            ]);
             queryClient.refetchQueries({ queryKey: ['sales', variables.store_id], type: 'all' });
             queryClient.refetchQueries({ queryKey: ['inventory', variables.store_id], type: 'all' });
             queryClient.refetchQueries({ queryKey: ['cash_transactions', variables.store_id], type: 'all' });
@@ -413,7 +425,13 @@ export function useAddExpenseOptimistic() {
                 data: expense
             }]);
         },
-        onSettled: (data, error, variables) => {
+        onSettled: async (data, error, variables) => {
+            if (variables?.store_id) {
+                await Promise.all([
+                    optimizedCache.invalidate(`expenses:${variables.store_id}`),
+                    optimizedCache.invalidate(`cash_transactions:${variables.store_id}`),
+                ]);
+            }
             queryClient.invalidateQueries({ queryKey: ['expenses'] });
             queryClient.invalidateQueries({ queryKey: ['cash_transactions'] });
         },
@@ -432,7 +450,8 @@ export function useDeleteExpenseOptimistic() {
                 data: { id }
             }]);
         },
-        onSettled: () => {
+        onSettled: async () => {
+            await optimizedCache.invalidate('expenses:');
             queryClient.invalidateQueries({ queryKey: ['expenses'] });
         },
     });

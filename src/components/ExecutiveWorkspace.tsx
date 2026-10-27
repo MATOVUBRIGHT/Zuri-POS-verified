@@ -4,6 +4,7 @@ import {
   ArrowLeftRight,
   BarChart3,
   Building2,
+  CreditCard,
   ChevronRight,
   CircleAlert,
   FileText,
@@ -12,7 +13,9 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  ShieldAlert,
   Store,
+  Trash2,
   TrendingDown,
   Settings as SettingsIcon,
   Settings2,
@@ -21,6 +24,7 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -64,6 +68,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import ExecutiveTeamAccess from "@/components/ExecutiveTeamAccess";
 import Settings from "@/components/Settings";
+import { useSubscription } from "@/providers/SubscriptionProvider";
 
 type ExecutivePage =
   | "boss-dashboard"
@@ -99,6 +104,14 @@ type CurrencyTotals = Record<string, {
   transactions: number;
   todayTransactions: number;
 }>;
+
+const branchPalette = [
+  { card: "border-slate-200 bg-white", rail: "bg-sky-500", icon: "bg-sky-100 text-sky-700", status: "bg-sky-100 text-sky-700", manage: "bg-sky-600 hover:bg-sky-700", delete: "border-sky-300 text-sky-700 hover:bg-sky-100" },
+  { card: "border-slate-200 bg-white", rail: "bg-violet-500", icon: "bg-violet-100 text-violet-700", status: "bg-violet-100 text-violet-700", manage: "bg-violet-600 hover:bg-violet-700", delete: "border-violet-300 text-violet-700 hover:bg-violet-100" },
+  { card: "border-slate-200 bg-white", rail: "bg-emerald-500", icon: "bg-emerald-100 text-emerald-700", status: "bg-emerald-100 text-emerald-700", manage: "bg-emerald-600 hover:bg-emerald-700", delete: "border-emerald-300 text-emerald-700 hover:bg-emerald-100" },
+  { card: "border-slate-200 bg-white", rail: "bg-amber-500", icon: "bg-amber-100 text-amber-700", status: "bg-amber-100 text-amber-700", manage: "bg-amber-600 hover:bg-amber-700", delete: "border-amber-300 text-amber-700 hover:bg-amber-100" },
+  { card: "border-slate-200 bg-white", rail: "bg-rose-500", icon: "bg-rose-100 text-rose-700", status: "bg-rose-100 text-rose-700", manage: "bg-rose-600 hover:bg-rose-700", delete: "border-rose-300 text-rose-700 hover:bg-rose-100" },
+] as const;
 
 const getLegacyBranchCurrency = (storeId: string) => {
   try {
@@ -180,11 +193,18 @@ export default function ExecutiveWorkspace({
   canCreateBranch?: boolean;
 }) {
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const { subscription, isTrialActive } = useSubscription();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [period, setPeriod] = useState("today");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [subscriptionPromptOpen, setSubscriptionPromptOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Branch | null>(null);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deletePasswordError, setDeletePasswordError] = useState("");
+  const [deleting, setDeleting] = useState(false);
   const [managedBranch, setManagedBranch] = useState<Branch | null>(null);
   const [branchName, setBranchName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -201,6 +221,8 @@ export default function ExecutiveWorkspace({
       return "";
     }
   });
+  const hasPaidBranchPlan = subscription?.status === "active" && !isTrialActive;
+  const requiresPaidBranchPlan = branches.length > 0 && !hasPaidBranchPlan;
 
   useEffect(() => {
     if (!userId) {
@@ -315,76 +337,85 @@ export default function ExecutiveWorkspace({
       todayStart.setHours(0, 0, 0, 0);
       const since = new Date(todayStart);
       if (period !== "today") since.setDate(since.getDate() - (Number(period) - 1));
-      const summaries = await Promise.all(
-        source.map(async (store) => {
-          const [sales, expenses] = await Promise.all([
+      const storeIds = source.map((store) => store.id);
+      const sinceIso = since.toISOString();
+      const sinceDate = sinceIso.slice(0, 10);
+      const [sales, expenses] = storeIds.length
+        ? await Promise.all([
             supabase
               .from("sales")
-              .select("total_amount, paid_in_cash, created_at, date_of_sale")
-              .eq("store_id", store.id),
+              .select("store_id, total_amount, paid_in_cash, created_at, date_of_sale")
+              .in("store_id", storeIds)
+              .or(`created_at.gte.${sinceIso},date_of_sale.gte.${sinceDate}`),
             supabase
               .from("expenses")
-              .select("amount, created_at, date_of_expense")
-              .eq("store_id", store.id),
-          ]);
-          if (sales.error || expenses.error)
-            throw sales.error || expenses.error;
-          const effectiveDate = (row: any, fallbackKey: string) => row.created_at || row[fallbackKey] || null;
-          const inPeriod = (value: string | null) => {
-            if (!value) return false;
-            const date = new Date(value);
-            return Number.isFinite(date.getTime()) && date >= since;
-          };
-          const salesRows = (sales.data || []).filter((row: any) => inPeriod(effectiveDate(row, "date_of_sale")));
-          const expenseRows = (expenses.data || []).filter((row: any) => inPeriod(effectiveDate(row, "date_of_expense")));
-          const todayRows = salesRows.filter((row: any) => {
-            const value = effectiveDate(row, "date_of_sale");
-            const date = value ? new Date(value) : null;
-            return date && Number.isFinite(date.getTime()) && date >= todayStart;
-          });
-          const latestSaleAt = salesRows.reduce<string | null>((latest, row: any) => {
-            const value = effectiveDate(row, "date_of_sale");
-            return value && (!latest || new Date(value) > new Date(latest)) ? value : latest;
-          }, null);
-          return {
-            ...store,
-            currency: store.currency || getLegacyBranchCurrency(store.id),
-            sales: salesRows.reduce(
-              (sum, row: any) => sum + Number(row.total_amount || 0),
-              0,
-            ),
-            expenses: expenseRows.reduce(
-              (sum, row: any) => sum + Number(row.amount || 0),
-              0,
-            ),
-            cash: salesRows
-              .filter((row: any) => row.paid_in_cash)
-              .reduce(
-                (sum, row: any) => sum + Number(row.total_amount || 0),
-                0,
-              ),
-            electronic: salesRows
-              .filter((row: any) => !row.paid_in_cash)
-              .reduce(
-                (sum, row: any) => sum + Number(row.total_amount || 0),
-                0,
-              ),
-            transactions: salesRows.length,
-            todaySales: todayRows.reduce(
-              (sum, row: any) => sum + Number(row.total_amount || 0),
-              0,
-            ),
-            todayExpenses: expenseRows
-              .filter((row: any) => {
-                const value = effectiveDate(row, "date_of_expense");
-                return value && new Date(value) >= todayStart;
-              })
-              .reduce((sum, row: any) => sum + Number(row.amount || 0), 0),
-            todayTransactions: todayRows.length,
-            latestSaleAt,
-          };
-        }),
-      );
+              .select("store_id, amount, created_at, date_of_expense")
+              .in("store_id", storeIds)
+              .or(`created_at.gte.${sinceIso},date_of_expense.gte.${sinceDate}`),
+          ])
+        : [
+            { data: [], error: null },
+            { data: [], error: null },
+          ];
+      if (sales.error || expenses.error) throw sales.error || expenses.error;
+
+      const businessDate = (row: any, businessKey: string) =>
+        row[businessKey] || row.created_at || null;
+      const inPeriod = (value: string | null) => {
+        if (!value) return false;
+        const date = new Date(value);
+        return Number.isFinite(date.getTime()) && date >= since;
+      };
+      const salesByStore = new Map<string, any[]>();
+      const expensesByStore = new Map<string, any[]>();
+      (sales.data || []).forEach((row: any) => {
+        if (!inPeriod(businessDate(row, "date_of_sale"))) return;
+        const rows = salesByStore.get(row.store_id) || [];
+        rows.push(row);
+        salesByStore.set(row.store_id, rows);
+      });
+      (expenses.data || []).forEach((row: any) => {
+        if (!inPeriod(businessDate(row, "date_of_expense"))) return;
+        const rows = expensesByStore.get(row.store_id) || [];
+        rows.push(row);
+        expensesByStore.set(row.store_id, rows);
+      });
+
+      const summaries = source.map((store) => {
+        const salesRows = salesByStore.get(store.id) || [];
+        const expenseRows = expensesByStore.get(store.id) || [];
+        const todayRows = salesRows.filter((row: any) => {
+          const value = businessDate(row, "date_of_sale");
+          const date = value ? new Date(value) : null;
+          return date && Number.isFinite(date.getTime()) && date >= todayStart;
+        });
+        const latestSaleAt = salesRows.reduce<string | null>((latest, row: any) => {
+          const value = businessDate(row, "date_of_sale");
+          return value && (!latest || new Date(value) > new Date(latest)) ? value : latest;
+        }, null);
+        return {
+          ...store,
+          currency: store.currency || getLegacyBranchCurrency(store.id),
+          sales: salesRows.reduce((sum, row: any) => sum + Number(row.total_amount || 0), 0),
+          expenses: expenseRows.reduce((sum, row: any) => sum + Number(row.amount || 0), 0),
+          cash: salesRows
+            .filter((row: any) => row.paid_in_cash)
+            .reduce((sum, row: any) => sum + Number(row.total_amount || 0), 0),
+          electronic: salesRows
+            .filter((row: any) => !row.paid_in_cash)
+            .reduce((sum, row: any) => sum + Number(row.total_amount || 0), 0),
+          transactions: salesRows.length,
+          todaySales: todayRows.reduce((sum, row: any) => sum + Number(row.total_amount || 0), 0),
+          todayExpenses: expenseRows
+            .filter((row: any) => {
+              const value = businessDate(row, "date_of_expense");
+              return value && new Date(value) >= todayStart;
+            })
+            .reduce((sum, row: any) => sum + Number(row.amount || 0), 0),
+          todayTransactions: todayRows.length,
+          latestSaleAt,
+        };
+      });
       setBranches(summaries);
     } catch (cause: any) {
       setError(cause?.message || "We could not load your executive data.");
@@ -479,12 +510,22 @@ export default function ExecutiveWorkspace({
     [displayCurrencyTotals],
   );
   const openCreate = () => {
-    if (canCreateBranch) setCreateOpen(true);
+    if (!canCreateBranch) return;
+    if (requiresPaidBranchPlan) {
+      setSubscriptionPromptOpen(true);
+      return;
+    }
+    setCreateOpen(true);
   };
   const createBranch = async () => {
     // Guard the write itself, not just the buttons: hiding a control is not an
     // authorization check.
     if (!canCreateBranch) return;
+    if (requiresPaidBranchPlan) {
+      setCreateOpen(false);
+      setSubscriptionPromptOpen(true);
+      return;
+    }
     if (!branchName.trim() || !userId) return;
     setCreating(true);
     const { data, error: createError } = await supabase
@@ -510,6 +551,52 @@ export default function ExecutiveWorkspace({
     await load();
     if (data?.id) onOpenBranch(data.id);
   };
+  const requestDeleteBranch = (branch: Branch) => {
+    if (branch.user_id !== userId) {
+      toast({ title: "Branch owner required", description: "Only the business owner can delete this branch.", variant: "destructive" });
+      return;
+    }
+    if (branches.length <= 1) {
+      toast({ title: "Cannot delete the only branch", description: "Keep at least one branch in the business.", variant: "destructive" });
+      return;
+    }
+    setDeleteTarget(branch);
+    setDeletePassword("");
+    setDeletePasswordError("");
+  };
+  const deleteBranch = async () => {
+    if (!deleteTarget || !deletePassword.trim() || !userId) {
+      setDeletePasswordError("Enter your executive account password to continue.");
+      return;
+    }
+    setDeleting(true);
+    setDeletePasswordError("");
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user?.email) {
+      setDeletePasswordError("This account cannot be re-authenticated with a password.");
+      setDeleting(false);
+      return;
+    }
+    const { error: authError } = await supabase.auth.signInWithPassword({ email: user.email, password: deletePassword });
+    if (authError) {
+      setDeletePasswordError("Incorrect account password.");
+      setDeleting(false);
+      return;
+    }
+    const { error: deleteError } = await supabase.from("stores").delete().eq("id", deleteTarget.id).eq("user_id", userId);
+    if (deleteError) {
+      toast({ title: "Could not delete branch", description: deleteError.message, variant: "destructive" });
+      setDeleting(false);
+      return;
+    }
+    const deletedName = deleteTarget.store_name;
+    setDeleteTarget(null);
+    setDeletePassword("");
+    setManagedBranch((current) => current?.id === deleteTarget.id ? null : current);
+    toast({ title: "Branch deleted", description: `${deletedName} and its branch data were deleted.`, variant: "success" });
+    setDeleting(false);
+    await load();
+  };
   const content = error ? (
     <State
       icon={<CircleAlert />}
@@ -532,6 +619,8 @@ export default function ExecutiveWorkspace({
       branches={displayBranches}
       onCreate={canCreateBranch ? openCreate : undefined}
       onManage={setManagedBranch}
+              onDelete={canCreateBranch ? requestDeleteBranch : undefined}
+              canDelete={(branch) => branch.user_id === userId}
     />
   ) : page === "executive-team" ? (
     <ExecutiveTeamAccess userId={userId} />
@@ -678,7 +767,7 @@ export default function ExecutiveWorkspace({
       {content}
       {/* Settings rendered inline via page route when `page === 'executive-settings'` */}
       <Dialog open={canCreateBranch && createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-md border-slate-200">
           <DialogHeader>
             <DialogTitle>Create a branch</DialogTitle>
             <DialogDescription>
@@ -707,6 +796,60 @@ export default function ExecutiveWorkspace({
             >
               {creating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Create & open POS
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={subscriptionPromptOpen} onOpenChange={setSubscriptionPromptOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add another branch</DialogTitle>
+            <DialogDescription>
+              A paid business license is required before you can create and use another branch.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            Choose a plan to continue. You can return here after approval.
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSubscriptionPromptOpen(false)}>Cancel</Button>
+            <Button onClick={() => { setSubscriptionPromptOpen(false); navigate("/plans", { state: { from: "/", reason: "additional_branch" } }); }}>
+              View plans
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open && !deleting) { setDeleteTarget(null); setDeletePassword(""); setDeletePasswordError(""); } }}>
+        <DialogContent className="max-w-md border-slate-200 bg-white">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-900">
+              <ShieldAlert className="h-5 w-5 text-amber-600" />
+              Confirm branch deletion
+            </DialogTitle>
+            <DialogDescription className="rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-amber-950">
+              Deleting <span className="font-semibold">{deleteTarget?.store_name}</span> permanently removes its inventory, sales, expenses, staff, and access records.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="delete-executive-password">Executive account password</Label>
+            <Input
+              id="delete-executive-password"
+              type="password"
+              value={deletePassword}
+              onChange={(event) => { setDeletePassword(event.target.value); setDeletePasswordError(""); }}
+              onKeyDown={(event) => event.key === "Enter" && void deleteBranch()}
+              autoFocus
+              placeholder="Enter your account password"
+            />
+            {deletePasswordError && <p className="text-sm text-destructive">{deletePasswordError}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button variant="destructive" disabled={deleting || !deletePassword.trim()} onClick={() => void deleteBranch()}>
+              {deleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              Delete branch permanently
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -830,14 +973,14 @@ function Overview({
             )}
           </CardContent>
         </Card>
-        <Card className="border-slate-200 bg-muted text-slate-950 shadow-sm xl:col-span-2 [&_h3]:!text-slate-950 [&_h3]:!font-bold">
+        <Card className="border-slate-200 bg-white text-slate-950 shadow-sm xl:col-span-2 [&_h3]:!text-slate-950 [&_h3]:!font-bold">
           <CardHeader className="px-7 pt-7 pb-3">
             <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-950">
               Action centre
             </p>
             <CardTitle className="text-lg text-slate-950">Today’s focus</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-6 px-7 pb-7">
+          <CardContent className="space-y-6 px-6 pb-6">
             <div className="border-l-2 border-emerald-400 pl-4">
               <p className="text-sm font-medium text-slate-950">
                 {hasMixedCurrencies
@@ -941,26 +1084,33 @@ function TodayPulseBoard({ branches, todayCurrencyTotals, transactions, exceptio
           <p className="text-[11px] font-bold uppercase tracking-[0.19em] text-slate-600">Branch signal</p>
           {branches.length ? (
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-              {branches.map((branch) => {
+              {branches.map((branch, index) => {
                 const needsAttention = branch.todayExpenses > branch.todaySales;
+                const colors = branchPalette[index % branchPalette.length];
                 return (
-                  <Card key={branch.id} className="min-w-0 rounded-none border-slate-200 bg-gray-50 shadow-none transition-colors hover:bg-gray-100">
-                    <CardContent className="space-y-3 p-4">
+                  <Card key={branch.id} className={`relative min-w-0 overflow-hidden rounded-xl border shadow-sm transition-shadow hover:shadow-md ${colors.card}`}>
+                    <span className={`absolute inset-y-0 left-0 w-1 ${colors.rail}`} aria-hidden="true" />
+                    <CardContent className="space-y-3 p-4 pl-5">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
+                        <div className="flex min-w-0 items-start gap-2">
+                          <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${colors.icon}`}>
+                            <Store className="h-3.5 w-3.5" />
+                          </span>
+                          <div className="min-w-0">
                           <p className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">{branch.currency}</p>
                           <p className="mt-1 break-words text-sm font-medium">{branch.store_name}</p>
+                          </div>
                         </div>
                         <div className="shrink-0 text-right">
                           {needsAttention ? (
-                            <Badge className="bg-amber-50 text-amber-700">Needs review</Badge>
+                            <Badge className="bg-amber-100 text-amber-800">Needs review</Badge>
                           ) : (
-                            <Badge className="bg-emerald-50 text-emerald-700">Reporting</Badge>
+                            <Badge className={colors.status}>Reporting</Badge>
                           )}
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
+                      <div className="grid grid-cols-2 gap-3 border-t border-slate-200/70 pt-3">
                         <div className="min-w-0">
                           <p className="text-xs text-slate-500">Transactions</p>
                           <p className="mt-1 font-semibold">{branch.todayTransactions}</p>
@@ -990,26 +1140,38 @@ function Branches({
   branches,
   onCreate,
   onManage,
+  onDelete,
+  canDelete,
 }: {
   branches: Branch[];
   onCreate: () => void;
   onManage: (branch: Branch) => void;
+  onDelete?: (branch: Branch) => void;
+  canDelete: (branch: Branch) => boolean;
 }) {
   return (
     <div className="space-y-5">
       {branches.length ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
-          {branches.map((branch) => (
-            <Card
+          {branches.map((branch, index) => {
+            const colors = branchPalette[index % branchPalette.length];
+            return (
+              <Card
               key={branch.id}
-              className="border-slate-200 shadow-sm transition-shadow hover:shadow-md"
+              className={`relative overflow-hidden shadow-sm transition-shadow hover:shadow-md ${colors.card}`}
             >
+              <span className={`absolute inset-y-0 left-0 w-1 ${colors.rail}`} aria-hidden="true" />
               <CardHeader className="space-y-0 p-3">
                 <div className="flex items-start justify-between gap-2">
-                  <CardTitle className="text-sm leading-tight">
-                    {branch.store_name}
-                  </CardTitle>
-                  <Badge className="shrink-0 bg-emerald-50 px-1.5 py-0 text-[10px] text-emerald-700 hover:bg-emerald-50">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${colors.icon}`}>
+                      <Building2 className="h-3.5 w-3.5" />
+                    </span>
+                    <CardTitle className="truncate text-sm leading-tight">
+                      {branch.store_name}
+                    </CardTitle>
+                  </div>
+                  <Badge className={`shrink-0 px-1.5 py-0 text-[10px] ${colors.status}`}>
                     Reporting
                   </Badge>
                 </div>
@@ -1030,19 +1192,33 @@ function Branches({
                   </div>
                 </div>
                 <div>
+                  <div className="flex gap-2">
                   <Button
                     size="sm"
-                    className="w-full"
+                    className={`min-w-0 flex-1 text-white ${colors.manage}`}
                     onClick={() => onManage(branch)}
                     title={`Manage ${branch.store_name}`}
                   >
                     <Settings2 className="mr-1 h-3.5 w-3.5" />
                     Manage branch
                   </Button>
+                  {onDelete && canDelete(branch) && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className={`min-w-0 flex-1 border ${colors.delete}`}
+                      onClick={() => onDelete(branch)}
+                      title={`Delete ${branch.store_name}`}
+                    >
+                      <Trash2 className="mr-1 h-3.5 w-3.5" />
+                      Delete branch
+                    </Button>
+                  )}
+                  </div>
                 </div>
               </CardContent>
             </Card>
-          ))}
+          )})}
         </div>
       ) : (
         <Empty onCreate={onCreate} />
@@ -1197,16 +1373,16 @@ function Reports({
   return (
     <div className="space-y-6">
       <WalkInPortfolioSummary storeIds={branches.map((branch) => branch.id)} />
-      <Card className="border-slate-200 bg-gradient-to-br from-slate-700 to-slate-500 text-white shadow-sm">
-        <CardContent className="flex flex-col gap-6 p-7 sm:flex-row sm:items-center sm:justify-between">
+      <Card className="border-slate-200 bg-white text-slate-900 shadow-sm">
+        <CardContent className="flex flex-col gap-6 p-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-200">
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-700">
               Consolidated report
             </p>
             <h2 className="mt-2 text-2xl font-semibold">
               Portfolio operating snapshot
             </h2>
-            <p className="mt-2 max-w-xl text-sm text-slate-100">
+            <p className="mt-2 max-w-xl text-sm text-slate-600">
               A decision-ready view across every branch you own or have been
               granted access to.
             </p>
@@ -1254,27 +1430,43 @@ function Metric({
   tone: "emerald" | "navy" | "amber" | "rose";
 }) {
   const variants = {
-    emerald: "sales",
-    navy: "cash",
-    amber: "stock",
-    rose: "profit",
+    emerald: {
+      card: "metric-card-sales",
+    },
+    navy: {
+      card: "metric-card-cash",
+    },
+    amber: {
+      card: "metric-card-stock",
+    },
+    rose: {
+      card: "metric-card-profit",
+    },
   } as const;
+  const colors = variants[tone];
+  const values = Array.isArray(value) ? value : [value];
   return (
-    <Card className={`metric-card metric-card-${variants[tone]} rounded-2xl`}>
+    <Card className={`metric-card ${colors.card} rounded-2xl`}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium text-white/80">
+        <CardTitle className="flex items-center gap-2 text-xs font-medium text-white/80">
           {label}
         </CardTitle>
-        <span className="h-4 w-4 text-white/70 [&>svg]:h-4 [&>svg]:w-4">
+        <span className="flex h-7 w-7 items-center justify-center text-white/70">
           {icon}
         </span>
       </CardHeader>
       <CardContent>
-        <div className="min-w-0 space-y-0.5 text-2xl font-bold text-black">{Array.isArray(value) ? value.map((entry) => <p className="break-words leading-tight" key={entry}>{entry}</p>) : value}</div>
-        <p className="mt-1 flex items-center text-xs text-white/70">
-          <Activity className="mr-1 h-3 w-3" />
-          {detail}
-        </p>
+        <div className="min-w-0 space-y-0.5">
+          <p className="break-words text-2xl font-semibold leading-tight tracking-tight text-white">
+            {values[0]}
+          </p>
+          {values.slice(1).map((entry) => (
+            <p className="break-words text-sm font-medium leading-tight text-white/80" key={entry}>
+              {entry}
+            </p>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-white/70">{detail}</p>
       </CardContent>
     </Card>
   );
@@ -1300,31 +1492,40 @@ function BranchTable({
           </tr>
         </thead>
         <tbody>
-          {branches.map((branch) => (
+          {branches.map((branch, index) => {
+            const colors = branchPalette[index % branchPalette.length];
+            const net = branch.sales - branch.expenses;
+            const needsAttention = net < 0;
+            return (
             <tr
               key={branch.id}
               className="border-b border-slate-100 last:border-0"
             >
-              <td className="py-4 font-medium text-slate-900">
-                {branch.store_name}
+              <td className="py-3 font-medium text-slate-900">
+                <div className="flex items-center gap-3">
+                  <span className={`h-9 w-1 shrink-0 rounded-full ${colors.rail}`} aria-hidden="true" />
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${colors.icon}`}>
+                    <Store className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate">{branch.store_name}</span>
+                    <span className="block text-xs font-normal text-slate-500">{branch.currency} · {branch.transactions} transactions</span>
+                  </span>
+                </div>
               </td>
-              <td>{formatBranchCurrency(branch.sales, branch.currency)}</td>
-              <td>{formatBranchCurrency(branch.expenses, branch.currency)}</td>
+              <td className="font-medium text-slate-700">{formatBranchCurrency(branch.sales, branch.currency)}</td>
+              <td className="text-slate-600">{formatBranchCurrency(branch.expenses, branch.currency)}</td>
               <td
-                className={
-                  branch.sales - branch.expenses < 0
-                    ? "font-medium text-rose-600"
-                    : "font-medium text-emerald-700"
-                }
+                className={needsAttention ? "font-medium text-rose-600" : "font-medium text-emerald-700"}
               >
-                {formatBranchCurrency(branch.sales - branch.expenses, branch.currency)}
+                {formatBranchCurrency(net, branch.currency)}
               </td>
               <td>
                 <Badge
                   variant="secondary"
-                  className="bg-emerald-50 text-emerald-700"
+                  className={needsAttention ? "bg-amber-100 text-amber-800" : colors.status}
                 >
-                  Healthy
+                  {needsAttention ? "Review" : "Healthy"}
                 </Badge>
               </td>
               {onManage && (
@@ -1340,7 +1541,8 @@ function BranchTable({
                 </td>
               )}
             </tr>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>
