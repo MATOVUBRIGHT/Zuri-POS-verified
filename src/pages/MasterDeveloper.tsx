@@ -102,7 +102,7 @@ export default function MasterDeveloper() {
   const revokeBusiness = async (ownerId: string) => {
     if (!window.confirm("Revoke this business account and remove access from all its branches?")) return;
     const ownedBranchIds = stores.filter((store) => store.user_id === ownerId).map((store) => store.id);
-    await supabase.from("profiles").update({ account_status: "suspended", is_active: false }).eq("user_id", ownerId);
+    await (supabase.from("profiles") as any).update({ account_status: "suspended", is_active: false }).eq("user_id", ownerId);
     if (ownedBranchIds.length) await supabase.from("store_access").delete().in("store_id", ownedBranchIds);
     const channel = supabase.channel("developer-broadcasts");
     await channel.subscribe();

@@ -258,6 +258,7 @@ export interface Notification {
   read: boolean;
   created_at: string;
   user_id: string;
+  store_id?: string | null;
   sender_email?: string;
   sender_name?: string;
   sender?: {

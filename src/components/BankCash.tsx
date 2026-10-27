@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Banknote,
   Building2,
@@ -6,10 +6,13 @@ import {
   Landmark,
   Loader2,
 Receipt,
+  Search,
+  CalendarDays,
   RefreshCw,
   User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -57,6 +60,8 @@ const BankCash = ({
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [bankedBy, setBankedBy] = useState<Record<string, string>>({});
   const [signedReceipts, setSignedReceipts] = useState<Record<string, string>>({});
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyDate, setHistoryDate] = useState("");
 
   // Query-backed so Supabase Realtime (and the polling fallback) refreshes the
   // account list as soon as accounts are added, renamed, deactivated or removed.
@@ -170,6 +175,14 @@ useEffect(() => {
   };
 
   const totalBanked = deposits.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+  const filteredDeposits = useMemo(() => {
+    const query = historySearch.trim().toLowerCase();
+    return deposits.filter((deposit) => {
+      const matchesQuery = !query || [deposit.bank_name, deposit.account_name, deposit.account_number, deposit.notes, String(deposit.amount)].some((value) => String(value || "").toLowerCase().includes(query));
+      const matchesDate = !historyDate || deposit.created_at.slice(0, 10) === historyDate;
+      return matchesQuery && matchesDate;
+    });
+  }, [deposits, historySearch, historyDate]);
 
   const formatStamp = (value: string) =>
     new Date(value).toLocaleString("en-US", {
@@ -246,7 +259,17 @@ useEffect(() => {
                 {fmtCurrency(totalBanked)} total
               </Badge>
             </CardTitle>
-            <CardDescription>Most recent 50 deposits for this branch.</CardDescription>
+            <CardDescription>Search by bank, account, notes, amount, or date.</CardDescription>
+            <div className="grid gap-2 pt-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder="Search banking history" className="pl-9" />
+              </div>
+              <div className="relative">
+                <CalendarDays className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input type="date" value={historyDate} onChange={(event) => setHistoryDate(event.target.value)} className="pl-9" aria-label="Filter banking history by date" />
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="min-h-0 flex-1 overflow-y-auto">
             {isLoading ? (
@@ -273,14 +296,14 @@ useEffect(() => {
                   Try again
                 </Button>
               </div>
-            ) : deposits.length === 0 ? (
+            ) : filteredDeposits.length === 0 ? (
               <div className="py-10 text-center text-sm text-muted-foreground">
                 <Building2 className="mx-auto mb-2 h-8 w-8 opacity-30" />
-                Nothing banked yet.
+                {deposits.length ? "No banking records match your filters." : "Nothing banked yet."}
               </div>
             ) : (
               <ul className="space-y-2">
-                {deposits.map((deposit) => {
+                {filteredDeposits.map((deposit) => {
                   const receiptHref = signedReceipts[deposit.id];
                   return (
                     <li

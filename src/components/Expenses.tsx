@@ -1,4 +1,5 @@
 ﻿import { useState, useRef, useMemo } from "react";
+import { useEffect } from "react";
 import { PageLoader, useMinimumLoading } from "@/components/ui/loading-spinner";
 import StatCard from "@/components/StatCard";
 import { fmtCurrency, getCurrencySymbol } from "@/lib/currency";
@@ -15,6 +16,7 @@ import {
   Receipt, Trash2, Loader2, Upload, Image, Wallet, Camera,
   TrendingDown, Plus, Search, X, Calendar, Tag, FileText
 } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAddExpenseOptimistic, useDeleteExpenseOptimistic } from "@/hooks/useOptimizedData";
 import { z } from "zod";
@@ -78,8 +80,29 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
   const [cardFilter, setCardFilter] = useState<"all" | "today" | "petty_cash">("all");
   const [mobileDialogOpen, setMobileDialogOpen] = useState(false);
   const [mobileLink, setMobileLink] = useState<string | null>(null);
+  const [mobileToken, setMobileToken] = useState<string | null>(null);
+  const [mobileReceiptPath, setMobileReceiptPath] = useState<string | null>(null);
+  const [mobileReceiptPreview, setMobileReceiptPreview] = useState<string | null>(null);
+  const [mobileUploadSuccess, setMobileUploadSuccess] = useState(false);
 
   const today = new Date().toISOString().split("T")[0];
+
+  useEffect(() => {
+    if (!mobileToken) return;
+    const channel = supabase.channel(`mobile-expense-upload-${mobileToken}`)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "mobile_actions", filter: `token=eq.${mobileToken}` }, async (payload: any) => {
+        const receiptPath = payload.new?.payload?.receipt_path;
+        if (!receiptPath) return;
+        setMobileReceiptPath(receiptPath);
+        const { data } = await supabase.storage.from("receipts").createSignedUrl(receiptPath, 3600);
+        setMobileReceiptPreview(data?.signedUrl || null);
+        setMobileUploadSuccess(true);
+        setMobileDialogOpen(false);
+        toast({ title: "Upload successful", description: "Receipt received from your phone. Complete the details, then save the expense." });
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [mobileToken, toast]);
 
   const stats = useMemo(() => {
     const total = expensesData.reduce((s, e) => s + e.amount, 0);
@@ -136,8 +159,8 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
         (await supabase.from("store_access").select("store_id").eq("user_id", user.id).limit(1)).data?.[0]?.store_id;
       if (!storeId) throw new Error("No store found");
 
-      let receiptUrl: string | null = null;
-      if (receiptFile) {
+      let receiptUrl: string | null = mobileReceiptPath;
+      if (!receiptUrl && receiptFile) {
         const ext = receiptFile.name.split(".").pop();
         const path = `${storeId}/${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage.from("receipts").upload(path, receiptFile);
@@ -166,7 +189,7 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
           || "Current user"
       );
       onAddExpense({ id: "opt-" + Date.now(), description: formData.description, category: formData.category, amount, paymentMethod: formData.paymentMethod, date: formData.date, notes: formData.notes, createdAt: new Date().toISOString(), createdBy: user.id, createdByName });
-      setFormData(emptyForm); setReceiptFile(null); setReceiptPreview(null);
+      setFormData(emptyForm); setReceiptFile(null); setReceiptPreview(null); setMobileReceiptPath(null); setMobileReceiptPreview(null); setMobileUploadSuccess(false); setMobileToken(null);
       toast({ title: "✓ Expense recorded" });
       setAddOpen(false);
     } catch (err: any) {
@@ -250,6 +273,8 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
       }
 
       const base = `${window.location.protocol}//${hostToUse}${port}`;
+      setMobileToken(token);
+      setMobileUploadSuccess(false);
       const link = `${base}/mobile?token=${encodeURIComponent(token)}&store_id=${encodeURIComponent(storeId)}`;
       // add cache-busting timestamp to ensure QR image reloads
       setMobileLink(link + `&_ts=${Date.now()}`);
@@ -486,7 +511,8 @@ const Expenses = ({ currentStoreId, expensesData, onAddExpense, onDeleteExpense,
                   </div>
                 )}
               </div>
-              {receiptPreview && <img src={receiptPreview} alt="Receipt" className="mt-1 max-h-24 rounded-lg border object-cover" />}
+              {(receiptPreview || mobileReceiptPreview) && <img src={receiptPreview || mobileReceiptPreview || ""} alt="Receipt" className="mt-1 max-h-32 w-full rounded-lg border bg-muted object-contain" />}
+              {mobileUploadSuccess && <p className="flex items-center gap-1 text-xs font-medium text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Phone upload successful. Complete the inputs, then save the expense.</p>}
             </div>
             <Button type="submit" className="w-full" disabled={isSubmitting}>
               {isSubmitting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Recording...</> : <><Plus className="h-4 w-4 mr-2" />Record Expense</>}

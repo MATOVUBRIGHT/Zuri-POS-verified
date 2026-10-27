@@ -119,13 +119,35 @@ export default function MobileAction() {
         setLoading(false);
         return;
       }
+      if (action.type === 'bank_receipt_upload') {
+        if (!file) throw new Error('Choose or take a bank receipt photo first');
+        const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+        const path = `${storeId}/${Date.now()}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from('receipts').upload(path, file, { contentType: file.type || 'image/jpeg' });
+        if (uploadError) throw uploadError;
+        const nextPayload = { ...(action.payload || {}), receipt_path: path, receipt_name: file.name, uploaded_at: new Date().toISOString() };
+        const { error: updateError } = await (supabase.from('mobile_actions' as any) as any).update({ payload: nextPayload }).eq('token', token);
+        if (updateError) throw updateError;
+        toast({ title: 'Upload successful', description: 'Bank receipt sent. Return to the banking screen to continue.' });
+        setLoading(false);
+        return;
+      }
       let receiptUrl: string | null = null;
       if (file) {
         const optimizedReceipt = file;
         const ext = optimizedReceipt.name.split('.').pop();
         const path = `${storeId}/${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage.from('receipts').upload(path, optimizedReceipt, { contentType: optimizedReceipt.type || 'image/jpeg' });
-        if (!upErr) receiptUrl = path;
+        if (upErr) throw upErr;
+        receiptUrl = path;
+        if (token) {
+          const nextPayload = { ...(action.payload || {}), receipt_path: path, receipt_name: optimizedReceipt.name, uploaded_at: new Date().toISOString() };
+          const { error: actionError } = await (supabase.from('mobile_actions' as any) as any).update({ payload: nextPayload }).eq('token', token);
+          if (actionError) throw actionError;
+          toast({ title: 'Upload successful', description: 'Receipt sent to the expense popup. Complete the inputs there, then save.' });
+          setLoading(false);
+          return;
+        }
       }
       const payload = {
         store_id: storeId,

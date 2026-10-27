@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { fmtCurrency } from "@/lib/currency";
 import { supabase } from "@/integrations/supabase/client";
-import { Notification } from "@/types";
+import { Notification as AppNotification } from "@/types";
 import { Bell, AlertTriangle, CreditCard, Package, Sparkles, Clock3, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,11 +21,12 @@ interface NotificationCenterProps {
   onPageChange?: (page: string, params?: any) => void;
   /** The branch context is supplied by the POS shell, never guessed from ownership. */
   currentStoreId?: string | null;
+  executiveMode?: boolean;
 }
 
-const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenterProps) => {
+const NotificationCenter = ({ onPageChange, currentStoreId, executiveMode = false }: NotificationCenterProps) => {
   const { toast } = useToast();
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
   const [currentUserEmail, setCurrentUserEmail] = useState("");
@@ -34,16 +35,27 @@ const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenter
 
   useEffect(() => {
     // Wait for the store context before doing anything — avoids store_id=eq.undefined 400s
-    if (!currentStoreId) return;
+    if (!currentStoreId && !executiveMode) return;
 
     fetchNotifications();
     const cleanupRealtime = setupRealtimeSubscription();
-    checkForAlerts();
+    if (currentStoreId) checkForAlerts();
+    void (supabase as any).rpc("create_daily_branch_reports");
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      void Notification.requestPermission();
+    }
 
     return () => {
       cleanupRealtime();
     };
-  }, [currentStoreId]);
+  }, [currentStoreId, executiveMode]);
+
+  const getNotificationStoreIds = async () => {
+    if (currentStoreId) return [currentStoreId];
+    if (!executiveMode) return [];
+    const { data } = await supabase.from("stores").select("id");
+    return (data || []).map((store) => store.id);
+  };
 
   const checkForAlerts = async () => {
     try {
@@ -182,21 +194,26 @@ const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenter
 
   const fetchNotifications = async () => {
     // Don't query until we have a valid store context — prevents store_id=eq.undefined 400s
-    if (!currentStoreId) return;
-
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
       setCurrentUserEmail(user.email || "");
 
+      const storeIds = await getNotificationStoreIds();
+      if (storeIds.length === 0) {
+        setNotifications([]);
+        setUnreadCount(0);
+        return;
+      }
+
       const { data, error } = await (supabase as any)
         .from("notifications")
         .select("*")
         .eq("user_id", user.id)
-        .eq("store_id", currentStoreId)
+        .in("store_id", storeIds)
         .order("created_at", { ascending: false })
-        .limit(50);
+        .limit(100);
 
       if (error) throw error;
       
@@ -206,7 +223,7 @@ const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenter
           sender_email: n.sender?.email,
           sender_name: n.sender?.full_name,
           data: n.data as Record<string, unknown> | null
-        })) as Notification[];
+        })) as AppNotification[];
         setNotifications(mapped);
         setUnreadCount(mapped.filter(n => !n.read).length);
       }
@@ -216,7 +233,7 @@ const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenter
   };
 
   const setupRealtimeSubscription = () => {
-    if (!currentStoreId) return () => undefined;
+    if (!currentStoreId && !executiveMode) return () => undefined;
     // Remove any lingering channel with the same topic to avoid attaching handlers after subscribe.
     supabase
       .getChannels()
@@ -238,12 +255,17 @@ const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenter
           event: "INSERT",
           schema: "public",
           table: "notifications",
-          filter: `store_id=eq.${currentStoreId}`,
+          filter: executiveMode ? undefined : `store_id=eq.${currentStoreId}`,
         },
         (payload) => {
-          const newNotification = payload.new as Notification;
+          const newNotification = payload.new as AppNotification;
+          if (currentStoreId && newNotification.store_id && newNotification.store_id !== currentStoreId) return;
           setNotifications(prev => [newNotification, ...prev]);
           setUnreadCount(prev => prev + 1);
+
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            new Notification(newNotification.title, { body: newNotification.message, tag: newNotification.id });
+          }
           
           toast({
             title: newNotification.title,
@@ -283,17 +305,16 @@ const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenter
   };
 
   const markAllAsRead = async () => {
-    if (!currentStoreId) return;
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { error } = await (supabase as any)
+      let query = (supabase as any)
         .from("notifications")
         .update({ read: true })
-        .eq("user_id", user.id)
-        .eq("store_id", currentStoreId)
-        .eq("read", false);
+        .eq("user_id", user.id);
+      if (currentStoreId) query = query.eq("store_id", currentStoreId);
+      const { error } = await query.eq("read", false);
 
       if (error) throw error;
 
@@ -357,7 +378,7 @@ const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenter
         </Button>
       </SheetTrigger>
       <SheetContent className="w-full sm:max-w-md p-0 border-l border-primary/10 bg-gradient-to-b from-background via-background to-muted/30">
-        <div className="h-full flex flex-col">
+        <div className="flex h-full min-h-0 flex-col overflow-hidden">
           <SheetHeader className="px-5 pt-5 pb-3 border-b bg-background/80 backdrop-blur">
             <SheetTitle className="flex items-center gap-2">
               <div className="p-1.5 rounded-lg bg-primary/10">
@@ -391,7 +412,7 @@ const NotificationCenter = ({ onPageChange, currentStoreId }: NotificationCenter
             </div>
           )}
 
-          <ScrollArea className="flex-1 px-4 pb-4 mt-3">
+          <ScrollArea className="min-h-0 flex-1 px-4 pb-4 mt-3">
             <div className="space-y-3 pr-1">
               {visibleNotifications.length === 0 ? (
                 <div className="text-center py-10 text-muted-foreground">

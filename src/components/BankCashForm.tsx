@@ -3,12 +3,12 @@ import { z } from "zod";
 import {
   ArrowRight,
   Building2,
-  Camera,
   Image as ImageIcon,
   Landmark,
   Loader2,
   Receipt,
   ShieldCheck,
+  Smartphone,
   Upload,
   X,
 } from "lucide-react";
@@ -71,6 +71,11 @@ const BankCashForm = ({
   const [notes, setNotes] = useState("");
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
+  const [mobileToken, setMobileToken] = useState<string | null>(null);
+  const [mobileReceiptPath, setMobileReceiptPath] = useState<string | null>(null);
+  const [mobileReceiptPreview, setMobileReceiptPreview] = useState<string | null>(null);
+  const [mobileUploadSuccess, setMobileUploadSuccess] = useState(false);
+  const [mobileLink, setMobileLink] = useState<string | null>(null);
   const [step, setStep] = useState<"form" | "verify">("form");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -81,6 +86,22 @@ const BankCashForm = ({
     () => (accounts ?? []).filter((a) => Boolean(a?.id)),
     [accounts],
   );
+
+  useEffect(() => {
+    if (!mobileToken) return;
+    const channel = supabase.channel(`mobile-bank-receipt-${mobileToken}`)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "mobile_actions", filter: `token=eq.${mobileToken}` }, async (payload: any) => {
+        const path = payload.new?.payload?.receipt_path;
+        if (!path) return;
+        setMobileReceiptPath(path);
+        const { data } = await supabase.storage.from("receipts").createSignedUrl(path, 3600);
+        setMobileReceiptPreview(data?.signedUrl || null);
+        setMobileUploadSuccess(true);
+        toast({ title: "Receipt uploaded", description: "Receipt received from your phone. Continue and bank the cash." });
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [mobileToken, toast]);
 
   // Object URLs leak until revoked, so release the previous preview whenever the
   // file changes or the form unmounts.
@@ -138,7 +159,50 @@ const BankCashForm = ({
     setBankName("");
     setAccountId("");
     clearReceipt();
+    setMobileToken(null);
+    setMobileReceiptPath(null);
+    setMobileReceiptPreview(null);
+    setMobileUploadSuccess(false);
+    setMobileLink(null);
     setStep("form");
+  };
+
+  const generateMobileReceiptLink = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Login required to generate a mobile upload link");
+      const token = crypto.randomUUID();
+      const payload = { action_type: "bank_receipt_upload", store_id: storeId, token, payload: { bank_name: bankName.trim() || null }, expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() };
+      const { error } = await (supabase.from("mobile_actions" as any) as any).insert(payload);
+      if (error) throw error;
+      let host = window.location.hostname;
+      if (host === "localhost" || host === "127.0.0.1") {
+        try {
+          const peer = new RTCPeerConnection({ iceServers: [] });
+          peer.createDataChannel("zuri-bank-upload");
+          const localIp = await new Promise<string | null>((resolve) => {
+            const timeout = window.setTimeout(() => { peer.close(); resolve(null); }, 1500);
+            peer.onicecandidate = (event) => {
+              const match = event.candidate?.candidate.match(/([0-9]{1,3}(?:\.[0-9]{1,3}){3})/);
+              if (match && !match[1].startsWith("127.")) {
+                window.clearTimeout(timeout);
+                peer.close();
+                resolve(match[1]);
+              }
+            };
+            void peer.createOffer().then((offer) => peer.setLocalDescription(offer)).catch(() => resolve(null));
+          });
+          if (localIp) host = localIp;
+        } catch { /* Keep localhost when a LAN address cannot be discovered. */ }
+      }
+      setMobileToken(token);
+      setMobileUploadSuccess(false);
+      const link = `${window.location.protocol}//${host}${window.location.port ? `:${window.location.port}` : ""}/mobile?token=${encodeURIComponent(token)}&store_id=${encodeURIComponent(storeId)}`;
+      toast({ title: "Mobile upload opened", description: "Sign in on the phone, upload the bank receipt, then return here." });
+      setMobileLink(link);
+    } catch (error: any) {
+      toast({ title: "Could not open mobile upload", description: error?.message || String(error), variant: "destructive" });
+    }
   };
 
   const handleVerify = (e: React.FormEvent) => {
@@ -179,8 +243,8 @@ const BankCashForm = ({
     if (isSubmitting) return;
     setIsSubmitting(true);
     try {
-      let receiptPath: string | null = null;
-      if (receiptFile) {
+      let receiptPath: string | null = mobileReceiptPath;
+      if (!receiptPath && receiptFile) {
         const ext = (receiptFile.name.split(".").pop() || "jpg").toLowerCase();
         receiptPath = `${storeId}/${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage
@@ -485,7 +549,6 @@ const BankCashForm = ({
           type="file"
           ref={fileInputRef}
           accept="image/*"
-          capture="environment"
           onChange={handleReceiptChange}
           className="hidden"
         />
@@ -505,10 +568,10 @@ const BankCashForm = ({
             variant="outline"
             size="sm"
             className="gap-1.5"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => void generateMobileReceiptLink()}
           >
-            <Camera className="h-3.5 w-3.5" />
-            Take photo
+            <Smartphone className="h-3.5 w-3.5" />
+            Upload from phone
           </Button>
           {receiptFile && (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -525,13 +588,15 @@ const BankCashForm = ({
             </div>
           )}
         </div>
-        {receiptPreview && (
+        {(receiptPreview || mobileReceiptPreview) && (
           <img
-            src={receiptPreview}
+            src={receiptPreview || mobileReceiptPreview || ""}
             alt="Receipt preview"
-            className="mt-1 max-h-24 rounded-lg border object-cover"
+            className="mt-1 max-h-32 w-full rounded-lg border bg-muted object-contain"
           />
         )}
+        {mobileUploadSuccess && <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-700"><ShieldCheck className="h-3.5 w-3.5" />Mobile receipt uploaded successfully.</p>}
+        {mobileLink && !mobileUploadSuccess && <div className="mt-3 rounded-xl border border-dashed bg-muted/30 p-3 text-center"><p className="text-xs font-medium">Scan this code with the phone camera</p><img className="mx-auto mt-2 h-40 w-40 rounded-lg bg-white p-2" alt="QR code for mobile bank receipt upload" src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(mobileLink)}`} /><p className="mt-2 break-all text-[10px] text-muted-foreground">{mobileLink}</p></div>}
       </div>
 
       <div className="flex gap-2 pt-1">

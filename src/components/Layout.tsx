@@ -936,7 +936,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
   <HelpCircle size={18} />
   <span className="hidden sm:inline">Help</span>
 </Button>
-<NotificationCenter onPageChange={onPageChange} currentStoreId={currentStoreId} />
+<NotificationCenter onPageChange={onPageChange} currentStoreId={currentStoreId} executiveMode={executiveMode} />
             <div className="pl-2 ml-1">
               <UserProfile onPageChange={onPageChange} userRole={userRole} executiveMode={executiveMode} />
             </div>
@@ -1105,7 +1105,7 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
 
         {/* Main Content - the single scroll container. Pages fill it with
             h-full + flex so no page has to guess chrome height with 100vh. */}
-                <main className="min-w-0 flex-1 overflow-y-auto overflow-x-clip p-4 sm:p-6">
+                <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip p-4 sm:p-6">
           {showPageSkeleton ? (
             <div className="page-enter min-w-0 h-full">
               <PageLoader text="Loading page..." className="min-h-[60vh]" />
