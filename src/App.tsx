@@ -305,8 +305,6 @@ const App = () => {
 
   useEffect(() => {
     // Start performance monitoring and optimization
-    const startTime = performance.now();
-    
     // Immediate optimization checks
     // Defer heavy operations to avoid blocking UI
     setTimeout(() => {
@@ -315,7 +313,7 @@ const App = () => {
 
     // Monitor memory and performance in dev mode only
     if (process.env.NODE_ENV === 'development') {
-      const loadTime = Math.max(0, Date.now() - (window.performance?.timeOrigin || Date.now()));
+      const loadTime = Math.round(performance.now());
       console.log('POS App loaded in:', Math.round(loadTime), 'ms');
     }
   }, []);

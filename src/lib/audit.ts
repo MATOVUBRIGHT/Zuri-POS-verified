@@ -25,8 +25,6 @@ export const logAudit = async ({
     const { data: { user } } = await supabase.auth.getUser();
     if (!user || !storeId) return;
 
-    // Keep the primary payload to columns present in the original audit table.
-    // Staff metadata is optional and was added by a later migration.
     const auditRecord = {
       user_id: user.id,
       store_id: storeId,
@@ -39,16 +37,30 @@ export const logAudit = async ({
       new_data: newData as any,
     };
 
-    const firstAttempt = await supabase.from("audit_logs").insert([auditRecord]);
+    const firstAttempt = await (supabase.from("audit_logs") as any).insert([auditRecord]);
     if (!firstAttempt.error) return;
 
-    const legacy = await supabase.from("audit_logs").insert([{
-      user_id: user.id, store_id: storeId, action, entity_type: tableName,
-      entity_id: recordId || null, old_data: oldData, new_data: newData,
-      staff_id: staffId || null,
-      staff_name: staffName || null,
-    } as any]);
-    if (legacy.error) throw legacy.error;
+    // Older deployed databases may expose only the legacy entity columns or
+    // may not yet have staff metadata. Retry with the smallest shared shape so
+    // audit failures never surface as a user-facing transaction error.
+    const legacy = await (supabase.from("audit_logs") as any).insert([{
+      user_id: user.id,
+      store_id: storeId,
+      action,
+      entity_type: tableName,
+      entity_id: recordId || null,
+      old_data: oldData,
+      new_data: newData,
+    }]);
+    if (!legacy.error) return;
+
+    await (supabase.from("audit_logs") as any).insert([{
+      user_id: user.id,
+      store_id: storeId,
+      action,
+      old_data: oldData,
+      new_data: newData,
+    }]);
   } catch (error) {
     console.error("Failed to log audit:", error);
   }

@@ -4,7 +4,7 @@ import { optimizedCache } from './optimizedCache';
 class StartupOptimizer {
   private criticalDataKeys: string[] = [];
   private startupTime = typeof window !== 'undefined' && 'performance' in window
-    ? (window.performance.timeOrigin ?? Date.now())
+    ? window.performance.now()
     : Date.now();
 
   // Track critical data that should be available instantly
@@ -82,10 +82,9 @@ class StartupOptimizer {
 
   // Measure and log performance metrics
   measureStartupPerformance() {
-    const navigationStart = typeof window !== 'undefined' && 'performance' in window
-      ? (window.performance.timeOrigin ?? this.startupTime)
-      : this.startupTime;
-    const loadTime = Math.max(0, Date.now() - navigationStart);
+    const loadTime = typeof window !== 'undefined' && 'performance' in window
+      ? Math.max(0, window.performance.now() - this.startupTime)
+      : Math.max(0, Date.now() - this.startupTime);
 
     // Startup diagnostics are useful during development but add noise and
     // work in production. Do not mutate cache policy based on one slow load.
