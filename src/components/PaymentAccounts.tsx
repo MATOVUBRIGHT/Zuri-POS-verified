@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LoadingMark, PageLoader, useMinimumLoading } from "@/components/ui/loading-spinner";
-import { ChevronDown, ChevronUp, CircleAlert, ExternalLink as ExternalLinkIcon, Info, Landmark, MoreVertical, Pencil, Plus, Scale, WalletCards } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, ChevronUp, CircleAlert, ExternalLink as ExternalLinkIcon, Info, Landmark, MoreVertical, Pencil, Plus, Scale, WalletCards } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { fmtCurrency } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
@@ -95,6 +95,7 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
   const [dialog, setDialog] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
   const [adjusting, setAdjusting] = useState<Account | null>(null);
+  const [transferOpen, setTransferOpen] = useState(false);
   const [reconciling, setReconciling] = useState<Account | null>(null);
   const [reconcileLedger, setReconcileLedger] = useState<Ledger[]>([]);
   const [reconcileLoading, setReconcileLoading] = useState(false);
@@ -106,6 +107,7 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
 
   const [form, setForm] = useState<any>(blank);
   const [adjustment, setAdjustment] = useState({ amount: "", entry_type: "adjustment", reference: "", notes: "" });
+  const [transfer, setTransfer] = useState({ from: "", to: "", amount: "", reference: "", notes: "" });
 
   const loadBranches = useCallback(async () => {
     const { data: auth } = await supabase.auth.getUser();
@@ -304,6 +306,33 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
     void load();
   };
 
+  const openTransfer = () => {
+    const active = accounts.filter((account) => account.is_active);
+    setTransfer({ from: active[0]?.id || "", to: active[1]?.id || "", amount: "", reference: "", notes: "" });
+    setTransferOpen(true);
+  };
+
+  const transferFunds = async () => {
+    if (!transfer.from || !transfer.to || transfer.from === transfer.to || !Number(transfer.amount)) return;
+    setSaving(true);
+    const { error } = await supabase.rpc("transfer_payment_account_funds" as any, {
+      p_from_account_id: transfer.from,
+      p_to_account_id: transfer.to,
+      p_amount: Math.abs(Number(transfer.amount)),
+      p_reference: transfer.reference.trim() || null,
+      p_notes: transfer.notes.trim() || null,
+    });
+    setSaving(false);
+    if (error) {
+      toast({ title: "Could not transfer funds", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: "Transfer recorded", description: "Both account balances have been updated." });
+    setTransferOpen(false);
+    setTransfer({ from: "", to: "", amount: "", reference: "", notes: "" });
+    void load();
+  };
+
   if (showLoader) {
     return <PageLoader text="Loading accounts..." />;
   }
@@ -327,6 +356,9 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
           {executive && (
             <Button onClick={openNew} disabled={!storeId}><Plus className="mr-2 h-4 w-4" />Add account</Button>
           )}
+          <Button onClick={openTransfer} disabled={!storeId || accounts.filter((account) => account.is_active).length < 2} variant="outline">
+            <ArrowLeftRight className="mr-2 h-4 w-4" />Transfer funds
+          </Button>
         </div>
       </div>
 
@@ -421,6 +453,48 @@ export default function PaymentAccounts({ currentStoreId, executive = false, use
           <Activity accounts={accounts} ledger={ledger} users={actorNames} />
         </>
       )}
+
+      <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Transfer between accounts</DialogTitle>
+            <DialogDescription>Move money from one active branch account to another. The source balance is checked before saving.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div>
+              <Label>From account</Label>
+              <Select value={transfer.from} onValueChange={(value) => setTransfer({ ...transfer, from: value })}>
+                <SelectTrigger><SelectValue placeholder="Select source account" /></SelectTrigger>
+                <SelectContent>{accounts.filter((account) => account.is_active).map((account) => <SelectItem key={account.id} value={account.id}>{account.name} · {fmtCurrency(balances[account.id] || 0)}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>To account</Label>
+              <Select value={transfer.to} onValueChange={(value) => setTransfer({ ...transfer, to: value })}>
+                <SelectTrigger><SelectValue placeholder="Select destination account" /></SelectTrigger>
+                <SelectContent>{accounts.filter((account) => account.is_active && account.id !== transfer.from).map((account) => <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Amount</Label>
+              <Input type="number" min="0.01" step="0.01" inputMode="decimal" value={transfer.amount} onChange={(event) => setTransfer({ ...transfer, amount: event.target.value })} placeholder="0.00" />
+              {transfer.from && <p className="mt-1 text-xs text-muted-foreground">Available: {fmtCurrency(balances[transfer.from] || 0)}</p>}
+            </div>
+            <div>
+              <Label>Reference (optional)</Label>
+              <Input value={transfer.reference} onChange={(event) => setTransfer({ ...transfer, reference: event.target.value })} placeholder="e.g. Bank deposit" />
+            </div>
+            <div>
+              <Label>Notes (optional)</Label>
+              <Textarea value={transfer.notes} onChange={(event) => setTransfer({ ...transfer, notes: event.target.value })} placeholder="Reason or transfer details" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTransferOpen(false)}>Cancel</Button>
+            <Button disabled={saving || !transfer.from || !transfer.to || transfer.from === transfer.to || !Number(transfer.amount)} onClick={transferFunds}>Transfer funds</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialog} onOpenChange={setDialog}>
         <DialogContent>

@@ -93,7 +93,15 @@ export default function MasterDeveloper() {
   const saveSubscription = async () => {
     if (!subscriptionTarget) return;
     setSavingSubscription(true);
-    const payload = { user_id: subscriptionTarget.user_id, status: subscriptionStatus, expires_at: subscriptionExpiry ? new Date(`${subscriptionExpiry}T23:59:59`).toISOString() : null, payment_reference: paymentReference.trim() || null };
+    const payload = {
+      user_id: subscriptionTarget.user_id,
+      status: subscriptionStatus,
+      expires_at: subscriptionExpiry ? new Date(`${subscriptionExpiry}T23:59:59`).toISOString() : null,
+      payment_reference: paymentReference.trim() || null,
+      ...(subscriptionStatus === "active"
+        ? { verified_at: new Date().toISOString(), verified_by: me }
+        : { verified_at: null, verified_by: null }),
+    };
     const result = subscriptionTarget.id ? await supabase.from("user_subscriptions").update(payload).eq("id", subscriptionTarget.id) : await supabase.from("user_subscriptions").insert(payload);
     setSavingSubscription(false);
     if (!result.error) { setSubscriptionTarget(null); void load(); }

@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useEffect, useState, lazy, Suspense } from "react";
+import { Clock, LogOut, RefreshCw, ShieldCheck } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { toast as notify } from "sonner";
@@ -15,6 +16,7 @@ import { SubscriptionProvider, useSubscription } from "@/providers/SubscriptionP
 import { PageLoader } from "@/components/ui/loading-spinner";
 import { startupOptimizer } from "./lib/startupOptimizer";
 import { DeveloperBroadcastListener } from "@/components/DeveloperBroadcastListener";
+import { useAppStateStore } from "@/store/appStateStore";
 
 // Lazy loading for all routes to improve initial load time
 const Index = lazy(() => import("./pages/Index"));
@@ -108,6 +110,21 @@ const queryClient = new QueryClient({
 // Wrapper component to provide userId to SubscriptionProvider
 const AppWithSubscription = ({ children }: { children: React.ReactNode }) => {
   const { user } = useShift();
+  const currentStoreId = useAppStateStore((state) => state.currentStoreId);
+
+  useEffect(() => {
+    const applyModernUi = () => {
+      try {
+        const key = currentStoreId ? `app_modern_ui_${currentStoreId}` : "app_modern_ui";
+        document.documentElement.classList.toggle("modern-ui", localStorage.getItem(key) === "true");
+      } catch {
+        document.documentElement.classList.remove("modern-ui");
+      }
+    };
+    applyModernUi();
+    window.addEventListener("modern-ui-change", applyModernUi);
+    return () => window.removeEventListener("modern-ui-change", applyModernUi);
+  }, [currentStoreId]);
 
   return (
     <SubscriptionProvider userId={user?.id || null}>
@@ -134,10 +151,36 @@ const SubscriptionGuard = ({ children }: { children: React.ReactNode }) => {
 
   if (subscription?.status === 'active') return <>{children}</>;
 
-  // Still loading subscription in background but we have a user — render children optimistically
-  if (subLoading) return <>{children}</>;
+  if (subLoading) return <PageLoader text="Checking subscription verification" className="min-h-screen" />;
+
+  if (subscription?.status === 'pending') return <PendingVerificationScreen />;
 
   return <Navigate to="/plans" state={{ from: location }} replace />;
+};
+
+const PendingVerificationScreen = () => {
+  const { refreshSubscription } = useSubscription();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const checkStatus = async () => {
+    setRefreshing(true);
+    try { await refreshSubscription(); } finally { setRefreshing(false); }
+  };
+
+  const signOut = async () => { await supabase.auth.signOut(); };
+
+  return (
+    <main className="flex min-h-screen items-center justify-center overflow-y-auto bg-slate-50 px-4 py-10">
+      <section className="w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-sm sm:p-9">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 text-amber-700"><Clock className="h-8 w-8" /></div>
+        <p className="mt-5 text-xs font-bold uppercase tracking-[0.18em] text-amber-700">Verification required</p>
+        <h1 className="mt-2 text-2xl font-bold text-slate-950">Payment verification is pending</h1>
+        <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-600">Your transaction is waiting for the developer to review and approve it. Access will open automatically after approval.</p>
+        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4 text-left text-sm text-slate-600"><p className="flex items-center gap-2 font-semibold text-slate-900"><ShieldCheck className="h-4 w-4 text-amber-600" />No workspace access is available yet</p><p className="mt-2">This page stays in place until the subscription changes to approved. You cannot skip ahead to the workspace.</p></div>
+        <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-center"><button type="button" onClick={() => void checkStatus()} disabled={refreshing} className="inline-flex items-center justify-center rounded-md bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"><RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />{refreshing ? "Checking..." : "Check verification status"}</button><button type="button" onClick={() => void signOut()} className="inline-flex items-center justify-center rounded-md border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"><LogOut className="mr-2 h-4 w-4" />Sign out</button></div>
+      </section>
+    </main>
+  );
 };
 
 // Guard component - enforces login using centralized useShift hook
@@ -153,6 +196,21 @@ const AuthShiftGuard = ({ children }: { children: React.ReactNode }) => {
   }
 
   return <>{children}</>;
+};
+
+// Branch URLs must not become a shortcut around subscription verification.
+// Keep the child mounted for an unauthenticated branch link so BranchPos can
+// still redirect to its branch-specific login screen.
+const BranchSubscriptionGuard = ({ children }: { children: React.ReactNode }) => {
+  const { loading: shiftLoading, user, isAdmin, isStable } = useShift();
+  const { subscription, loading: subLoading } = useSubscription();
+  const location = useLocation();
+  if (!isStable && shiftLoading && !user) return <PageLoader text="Checking your session" className="min-h-screen" />;
+  if (!user) return <>{children}</>;
+  if (isAdmin || subscription?.status === "active") return <>{children}</>;
+  if (subLoading) return <PageLoader text="Checking subscription verification" className="min-h-screen" />;
+  if (subscription?.status === "pending") return <PendingVerificationScreen />;
+  return <Navigate to="/plans" state={{ from: location }} replace />;
 };
 
 const shouldUseAuthShell = (pathname: string) => {
@@ -194,7 +252,7 @@ const AppRoutes = () => {
         {/* BranchPos performs its own branch-aware session check so an
             unauthenticated direct POS link can return to the
             matching branch login instead of generic /auth. */}
-        <Route path="/pos/:storeId" element={<BranchPos />} />
+        <Route path="/pos/:storeId" element={<BranchSubscriptionGuard><BranchPos /></BranchSubscriptionGuard>} />
         <Route path="/store/:storeId" element={<SubscriptionGuard><StoreView /></SubscriptionGuard>} />
         {/* Auth and plans routes - just need login, not subscription */}
         <Route path="/auth" element={<Auth />} />

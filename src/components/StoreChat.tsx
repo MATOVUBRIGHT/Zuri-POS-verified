@@ -77,7 +77,7 @@ import {
 } from "@/lib/chat";
 
 type Branch = { id: string; store_name: string };
-type ExecContact = { id: string; display_name: string; role: string };
+type ExecContact = { id: string; display_name: string; role: string; branch_name?: string };
 type ChatAlert = { fromLabel: string; text: string };
 type BranchRow = {
   id: string;
@@ -210,22 +210,36 @@ export default function StoreChat({
       setMessages(next);
     }
 
-    const [{ data: accessContacts }, { data: owner }] = await Promise.all([
-      (supabase as any).from("store_access").select("user_id, role").eq("store_id", preferred)
-        .in("role", ["owner", "boss", "accountant", "admin"]),
-      (supabase as any).from("stores").select("user_id").eq("id", preferred).maybeSingle(),
+    const otherBranchIds = permitted.filter((branch) => branch.id !== preferred).map((branch) => branch.id);
+    const [{ data: accessContacts }, { data: owners }] = await Promise.all([
+      otherBranchIds.length
+        ? (supabase as any).from("store_access").select("user_id, role, store_id").in("store_id", otherBranchIds)
+        : Promise.resolve({ data: [] }),
+      otherBranchIds.length
+        ? (supabase as any).from("stores").select("id, user_id").in("id", otherBranchIds)
+        : Promise.resolve({ data: [] }),
     ]);
-    const contactIds = Array.from(new Set([
-      ...(accessContacts || []).map((row: any) => row.user_id),
-      owner?.user_id,
-    ].filter((id): id is string => Boolean(id && id !== user.id))));
+    const branchNameById = new Map(permitted.map((branch) => [branch.id, branch.store_name]));
+    const contactRows = [
+      ...(accessContacts || []).map((row: any) => ({ ...row, branch_id: row.store_id })),
+      ...(owners || []).map((row: any) => ({ user_id: row.user_id, role: "Owner", branch_id: row.id })),
+    ];
+    const contactIds = Array.from(new Set(
+      contactRows.map((row: any) => row.user_id).filter((id: string) => id && id !== user.id),
+    ));
     if (contactIds.length) {
       const { data: profiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", contactIds);
-      const roleById = new Map((accessContacts || []).map((row: any) => [row.user_id, row.role]));
+      const roleById = new Map<string, string>();
+      const branchById = new Map<string, string>();
+      contactRows.forEach((row: any) => {
+        if (!roleById.has(row.user_id)) roleById.set(row.user_id, row.role || "Team member");
+        if (!branchById.has(row.user_id)) branchById.set(row.user_id, branchNameById.get(row.branch_id) || "Other branch");
+      });
       setExecContacts((profiles || []).map((profile: any) => ({
         id: profile.user_id,
         display_name: profile.full_name || roleById.get(profile.user_id) || "Executive",
         role: String(roleById.get(profile.user_id) || "Executive"),
+        branch_name: branchById.get(profile.user_id),
       })));
     } else {
       setExecContacts([]);

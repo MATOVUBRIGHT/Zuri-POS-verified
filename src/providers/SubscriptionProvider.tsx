@@ -40,7 +40,7 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode; userId?
 }) => {
   const [subscription, setSubscription] = useState<SubscriptionContextType['subscription']>(null);
   const [paymentRef, setPaymentRef] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false); // Start optimistic - don't block on subscription load
+  const [loading, setLoading] = useState(Boolean(userId));
   const [previousStatus, setPreviousStatus] = useState<string | null>(null);
   const [trialWarningShown, setTrialWarningShown] = useState(false);
   const { toast } = useToast();
@@ -137,7 +137,9 @@ export const SubscriptionProvider: React.FC<{ children: React.ReactNode; userId?
   }, [fetchSubscription]);
 
   useEffect(() => {
+    setLoading(Boolean(userId));
     if (!userId) {
+      hasFetched.current = false;
       setSubscription(null);
       setLoading(false);
       return;

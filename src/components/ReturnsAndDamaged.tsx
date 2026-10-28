@@ -17,7 +17,7 @@ import { StockItem, SaleItem } from "@/types";
 import { insertRowsWithSchemaFallback, updateByIdWithSchemaFallback } from "@/lib/supabaseSchemaFallback";
 import {
   Undo2, AlertTriangle, Package, Search, X, Plus, Minus,
-  RefreshCw, CheckCircle, Clock, TrendingDown, Trash2
+  RefreshCw, Trash2, CalendarDays, CircleDollarSign
 } from "lucide-react";
 
 interface ReturnsAndDamagedProps {
@@ -250,6 +250,10 @@ setReturns((rows || []).map((record: any) => mapReturnRecord(record)));
   const openReturnDialog = (type: "return" | "damaged", sale?: SaleItem) => {
     setReturnType(type);
     setReturnReason(""); setReturnNote(""); setAddToStock(true);
+    if (type === "damaged") {
+      setDamagedQuery("");
+      setDamagedSelection({});
+    }
     if (sale) {
       setSelectedSale(sale);
       setReturnItems((sale.products || []).map(p => ({
@@ -319,7 +323,7 @@ setReturns((rows || []).map((record: any) => mapReturnRecord(record)));
     if (returnType === "return" && (!selectedSale || selected.length === 0)) {
       toast({ title: "Select items to return", variant: "destructive" }); return;
     }
-    if (returnType === "damaged" && selected.length === 0) {
+    if (returnType === "damaged" && Object.values(damagedSelection).every(quantity => quantity <= 0)) {
       toast({ title: "Select items to mark as damaged", variant: "destructive" }); return;
     }
     if (!returnReason) { toast({ title: "Select a reason", variant: "destructive" }); return; }
@@ -332,7 +336,9 @@ setReturns((rows || []).map((record: any) => mapReturnRecord(record)));
       // Damaged goods coming back from a sale are held for review rather than
       // refunded, and they are never returned to sellable stock automatically.
       const flagged = returnType === "damaged"
-        ? await flagDamaged(selected.map(i => ({ productName: i.productName, quantity: i.quantity })), returnReason)
+        ? await flagDamaged(Object.entries(damagedSelection)
+          .filter(([, quantity]) => quantity > 0)
+          .map(([productName, quantity]) => ({ productName, quantity })), returnReason)
         : [];
       if (returnType === "damaged" && flagged.length === 0) return;
 
@@ -428,6 +434,7 @@ setReturns((rows || []).map((record: any) => mapReturnRecord(record)));
         description: totalAmount > 0 ? fmtCurrency(totalAmount) + " refunded & sale updated" : undefined
       });
       setReturnDialogOpen(false);
+      setDamagedQuery(""); setDamagedSelection({});
       fetchReturns();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -519,52 +526,48 @@ const submitDamaged = async () => {
     return <PageLoader text="Loading returns..." />;
   }
   return (
-    <div className="flex h-full flex-col space-y-6 animate-in fade-in duration-500">
-      {/* Header */}
-      <div className="flex justify-between items-center flex-wrap gap-3">
-        <div>
-          <h2 className="text-3xl font-bold flex items-center gap-3">
-            <Undo2 className="h-8 w-8 text-primary" />
-            Returns & Damaged
-          </h2>
-          <p className="text-muted-foreground mt-1">Track returned items and damaged stock</p>
+    <div className="returns-damaged-page min-h-full space-y-6 pb-8 animate-in fade-in duration-500">
+        {/* Header */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-3 text-3xl font-bold">
+              <Undo2 className="h-8 w-8 text-primary" />
+              Returns & damaged stock
+            </h2>
+            <p className="mt-1 text-muted-foreground">Process customer returns, protect sellable inventory, and review damaged stock.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => openReturnDialog("return")} className="gap-2">
+              <Undo2 className="h-4 w-4" />New return
+            </Button>
+            <Button onClick={() => openReturnDialog("damaged")} variant="outline" className="gap-2">
+              <AlertTriangle className="h-4 w-4" />Mark damaged
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => { void fetchReturns(); void fetchDamagedReview(); }} title="Refresh records" aria-label="Refresh records">
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={() => openReturnDialog("return")} className="gap-2 bg-amber-500 hover:bg-amber-600">
-            <Undo2 className="h-4 w-4" />Record Return
-          </Button>
-          <Button onClick={() => openReturnDialog("damaged")} variant="outline" className="gap-2 border-red-300 text-red-600 hover:bg-red-50">
-            <AlertTriangle className="h-4 w-4" />Mark Damaged
-          </Button>
-          <Button variant="ghost" size="icon" onClick={fetchReturns}><RefreshCw className="h-4 w-4" /></Button>
-        </div>
-      </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { tab: "returns", label: "Total Returns", value: stats.totalReturns, icon: Undo2, color: "text-amber-600", bg: "bg-amber-50" },
-          { tab: "returns", label: "Return Value", value: fmtCurrency(stats.returnValue), icon: TrendingDown, color: "text-amber-600", bg: "bg-amber-50" },
-          { tab: "damaged", label: "Damaged Items", value: stats.totalDamaged, icon: AlertTriangle, color: "text-red-600", bg: "bg-red-50" },
-          { tab: "damaged", label: "Damaged Value", value: fmtCurrency(stats.damagedValue), icon: Package, color: "text-red-600", bg: "bg-red-50" },
-        ].map(({ tab, label, value, icon, color, bg }) => (
-          <StatCard
-            key={label}
-            label={label}
-            value={value}
-            icon={icon}
-            color={color}
-            bg={bg}
-            active={activeTab === tab}
-            title={`Show ${tab}`}
-            onClick={() => setActiveTab(tab)}
-          />
-        ))}
-      </div>
+        {/* Summary cards */}
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {[
+            { tab: "returns", label: "Total returns", value: stats.totalReturns, sub: "Customer cases", icon: Undo2, color: "text-primary", bg: "bg-primary/10" },
+            { tab: "returns", label: "Returned value", value: fmtCurrency(stats.returnValue), sub: "Refunded value", icon: CircleDollarSign, color: "text-emerald-600", bg: "bg-emerald-50" },
+            { tab: "damaged", label: "Damaged items", value: stats.totalDamaged, sub: "Logged cases", icon: AlertTriangle, color: "text-red-600", bg: "bg-red-50" },
+            { tab: "damaged", label: "Damaged value", value: fmtCurrency(stats.damagedValue), sub: "Cost at review", icon: Package, color: "text-purple-600", bg: "bg-purple-50" },
+          ].map(({ tab, label, value, sub, icon, color, bg }) => (
+            <StatCard key={label} label={label} value={value} sub={sub} icon={icon} color={color} bg={bg}
+              active={activeTab === tab} title={`Show ${label.toLowerCase()}`} onClick={() => setActiveTab(tab)} />
+          ))}
+        </div>
 
       {/* Quick damaged stock form */}
-      <div className="rounded-xl border bg-card p-4 space-y-3">
-        <h3 className="font-semibold flex items-center gap-2"><AlertTriangle className="h-4 w-4 text-red-500" />Quick Damaged Stock Entry</h3>
+      <div className="rounded-lg border bg-card p-4 sm:p-5">
+        <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <h3 className="flex items-center gap-2 font-semibold"><span className="rounded-lg bg-amber-50 p-2"><AlertTriangle className="h-4 w-4 text-amber-600" /></span>Quick damaged stock entry</h3>
+          <p className="text-xs text-muted-foreground">Flag units before they can be sold</p>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="space-y-1 md:col-span-2">
             <Label className="text-xs">Item name <span className="text-destructive">*</span></Label>
@@ -625,24 +628,24 @@ const submitDamaged = async () => {
             </Select>
           </div>
         </div>
-        <div className="flex gap-3 items-end">
+        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="flex-1 space-y-1">
             <Label className="text-xs">Note (optional)</Label>
             <Input placeholder="Additional details..." value={damagedNote} onChange={e => setDamagedNote(e.target.value)} />
           </div>
-          <Button onClick={submitDamaged} disabled={submitting || damagedSelectedEntries.length === 0} className="bg-red-500 hover:bg-red-600 gap-2">
-            <AlertTriangle className="h-4 w-4" />Flag as Damaged
+          <Button onClick={submitDamaged} disabled={submitting || damagedSelectedEntries.length === 0} className="gap-2 bg-red-600 hover:bg-red-700">
+            <AlertTriangle className="h-4 w-4" />{submitting ? "Saving..." : "Flag as damaged"}
           </Button>
         </div>
       </div>
 
       {/* Damaged stock awaiting review — blocked from selling until resolved */}
-      <div className="rounded-xl border border-red-200 bg-red-50/30 p-4 space-y-3">
+      <div className="rounded-lg border bg-card p-4 sm:p-5">
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-red-500" />Damaged Stock Pending Review
+          <h3 className="flex items-center gap-2 font-semibold">
+            <span className="rounded-lg bg-red-50 p-2"><AlertTriangle className="h-4 w-4 text-red-600" /></span>Damaged stock pending review
           </h3>
-          <Badge variant={damagedReview.length > 0 ? "destructive" : "secondary"}>
+          <Badge variant={damagedReview.length > 0 ? "destructive" : "secondary"} className="rounded-full px-2.5">
             {damagedReview.length} item{damagedReview.length === 1 ? "" : "s"}
           </Badge>
         </div>
@@ -668,11 +671,11 @@ const submitDamaged = async () => {
                   </div>
                   <Button size="sm" variant="outline" disabled={resolvingItem === item.id}
                     onClick={() => resolveDamagedItem(item, "sellable")}>
-                    <RefreshCw className="h-3.5 w-3.5 mr-1" />Return to sellable
+                    <RefreshCw className="mr-1 h-3.5 w-3.5" />Return to sellable
                   </Button>
                   <Button size="sm" variant="destructive" disabled={resolvingItem === item.id}
                     onClick={() => resolveDamagedItem(item, "writeoff")}>
-                    <Trash2 className="h-3.5 w-3.5 mr-1" />Write off
+                    <Trash2 className="mr-1 h-3.5 w-3.5" />Write off
                   </Button>
                 </div>
               );
@@ -682,22 +685,28 @@ const submitDamaged = async () => {
       </div>
 
       {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search returns..." autoComplete="off" className="pl-9 pr-9 h-10" />
-        {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>}
+      <div className="rounded-lg border bg-card p-4 sm:p-5">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div><h3 className="font-semibold">Activity log</h3><p className="text-xs text-muted-foreground">Search and review completed returns and damaged stock.</p></div>
+          <div className="relative w-full sm:max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search records..." autoComplete="off" className="h-10 pl-9 pr-9" />
+            {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>}
+          </div>
+        </div>
       </div>
 
       {/* Tabs */}
+      <div className="rounded-lg border bg-card p-4 sm:p-5">
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="returns" className="gap-2"><Undo2 className="h-4 w-4" />Returns ({stats.totalReturns})</TabsTrigger>
-          <TabsTrigger value="damaged" className="gap-2"><AlertTriangle className="h-4 w-4" />Damaged ({stats.totalDamaged})</TabsTrigger>
+        <TabsList className="grid h-auto w-full max-w-md grid-cols-2">
+          <TabsTrigger value="returns" className="gap-2 py-2.5"><Undo2 className="h-4 w-4" />Returns ({stats.totalReturns})</TabsTrigger>
+          <TabsTrigger value="damaged" className="gap-2 py-2.5"><AlertTriangle className="h-4 w-4" />Damaged ({stats.totalDamaged})</TabsTrigger>
         </TabsList>
 
         {["returns", "damaged"].map(tab => (
           <TabsContent key={tab} value={tab}>
-            <ScrollArea className="min-h-0 flex-1" type="auto">
+            <ScrollArea className="mt-4 min-h-0" type="auto">
               <div className="space-y-3 pr-2">
                 {loading ? (
                   <div className="text-center py-10 text-muted-foreground">Loading...</div>
@@ -707,16 +716,16 @@ const submitDamaged = async () => {
                     <p className="font-medium">No {tab} recorded yet</p>
                   </div>
                 ) : filteredReturns.map(r => (
-                  <div key={r.id} className={`p-4 border rounded-xl ${tab === "returns" ? "border-amber-200 bg-amber-50/30" : "border-red-200 bg-red-50/30"}`}>
+                  <div key={r.id} className="rounded-lg border bg-card p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <div className={`p-2 rounded-lg shrink-0 ${tab === "returns" ? "bg-amber-100" : "bg-red-100"}`}>
+                        <div className={`shrink-0 rounded-lg p-2.5 ${tab === "returns" ? "bg-amber-50" : "bg-red-50"}`}>
                           {tab === "returns" ? <Undo2 className="h-4 w-4 text-amber-600" /> : <AlertTriangle className="h-4 w-4 text-red-600" />}
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-semibold">{r.sale?.customer_name || "Stock Return"}</span>
-                            <Badge variant="outline" className={tab === "returns" ? "border-amber-300 text-amber-700 bg-amber-50" : "border-red-300 text-red-700 bg-red-50"}>
+                            <Badge variant="outline" className={tab === "returns" ? "border-amber-200 text-amber-700 bg-amber-50" : "border-red-200 text-red-700 bg-red-50"}>
                               {tab === "returns" ? "Return" : "Damaged"}
                             </Badge>
                             <Badge variant="outline" className="text-xs">{r.status}</Badge>
@@ -743,17 +752,18 @@ const submitDamaged = async () => {
           </TabsContent>
         ))}
       </Tabs>
+      </div>
 
       {/* Return Dialog */}
       <Dialog open={returnDialogOpen} onOpenChange={setReturnDialogOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-lg !pb-12 sm:!pb-8">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {returnType === "return" ? <Undo2 className="h-5 w-5 text-amber-500" /> : <AlertTriangle className="h-5 w-5 text-red-500" />}
               {returnType === "return" ? "Record Return" : "Mark as Damaged"}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 pt-1">
+          <div className="space-y-4 pb-2 pt-1">
             {returnType === "return" && (
               <>
                 {!selectedSale ? (
@@ -811,6 +821,46 @@ const submitDamaged = async () => {
                   </div>
                 )}
               </>
+            )}
+
+            {returnType === "damaged" && (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label className="text-xs">Find stock items *</Label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input value={damagedQuery} onChange={e => setDamagedQuery(e.target.value)} placeholder="Search item by name or barcode..." autoComplete="off" className="pl-9" />
+                  </div>
+                  <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border bg-muted/20 p-2">
+                    {damagedMatches.length === 0 ? (
+                      <p className="py-3 text-center text-xs text-muted-foreground">No available stock matches this search.</p>
+                    ) : damagedMatches.map(item => {
+                      const flagged = item.damaged_quantity || 0;
+                      const sellable = Math.max(0, (item.quantity || 0) - flagged);
+                      const quantity = damagedSelection[item.productName] || 0;
+                      return (
+                        <div key={item.id} className={`flex items-center gap-2 rounded-md border bg-card p-2 ${quantity > 0 ? "border-destructive/40 bg-destructive/5" : ""}`}>
+                          <input type="checkbox" checked={quantity > 0} onChange={event => setDamagedSelection(current => {
+                            const next = { ...current };
+                            if (event.target.checked) next[item.productName] = 1; else delete next[item.productName];
+                            return next;
+                          })} className="h-4 w-4 cursor-pointer" />
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.productName}</span>
+                          <span className="text-xs text-muted-foreground">{sellable} sellable</span>
+                          {quantity > 0 && (
+                            <div className="flex items-center gap-1">
+                              <button type="button" onClick={() => setDamagedSelection(current => ({ ...current, [item.productName]: Math.max(1, quantity - 1) }))} className="flex h-6 w-6 items-center justify-center rounded border hover:bg-muted"><Minus className="h-3 w-3" /></button>
+                              <span className="w-6 text-center text-sm font-semibold">{quantity}</span>
+                              <button type="button" onClick={() => setDamagedSelection(current => ({ ...current, [item.productName]: Math.min(sellable, quantity + 1) }))} disabled={quantity >= sellable} className="flex h-6 w-6 items-center justify-center rounded border hover:bg-muted disabled:opacity-40"><Plus className="h-3 w-3" /></button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                {damagedSelectedEntries.length > 0 && <p className="text-xs text-muted-foreground">Selected: {damagedSelectedEntries.map(([name, quantity]) => `${quantity}× ${name}`).join(", ")}</p>}
+              </div>
             )}
 
             <div className="space-y-1">

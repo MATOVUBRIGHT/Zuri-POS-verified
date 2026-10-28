@@ -1059,11 +1059,11 @@ function TodayPulseBoard({ branches, todayCurrencyTotals, transactions, exceptio
   return (
     <Card className="overflow-hidden border-slate-200 bg-white text-slate-900 shadow-sm">
       <CardContent className="grid p-0 xl:grid-cols-[1.7fr_1fr]">
-        <section className="relative flex flex-col overflow-hidden p-6 sm:p-8 xl:p-10">
+        <section className="executive-today-surface relative flex flex-col overflow-hidden p-6 sm:p-8 xl:p-10">
           <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-48 border border-emerald-400/15" />
           <div className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 border border-emerald-400/20" />
           <p className="text-[11px] font-bold uppercase tracking-[0.19em] text-emerald-700">Portfolio / live today</p>
-          <div className="mt-5 space-y-1 break-words text-2xl font-semibold tracking-tight">{Object.entries(todayCurrencyTotals).map(([currency, values]) => <p key={currency}>{formatBranchCurrency(values.sales, currency)}</p>)}</div>
+          <div className="mt-5 space-y-1 break-words text-2xl font-semibold tracking-tight !text-slate-950">{Object.entries(todayCurrencyTotals).map(([currency, values]) => <p key={currency}>{formatBranchCurrency(values.sales, currency)}</p>)}</div>
           <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">Sales recorded today across {branches.length} reporting branch{branches.length === 1 ? "" : "es"}.</p>
           <div className="mt-auto grid grid-cols-2 gap-4 border-t border-slate-200 pt-5 sm:gap-8">
             <div className="min-w-0">
@@ -1117,7 +1117,7 @@ function TodayPulseBoard({ branches, todayCurrencyTotals, transactions, exceptio
                         </div>
                         <div className="min-w-0 text-right">
                           <p className="text-xs text-slate-500">Sales</p>
-                          <p className="mt-1 break-words font-semibold">{formatBranchCurrency(branch.todaySales, branch.currency)}</p>
+                          <p className="mt-1 break-words font-semibold text-slate-950">{formatBranchCurrency(branch.todaySales, branch.currency)}</p>
                         </div>
                       </div>
                     </CardContent>
@@ -1180,13 +1180,13 @@ function Branches({
                 <div className="grid grid-cols-2 gap-2 border-y border-slate-100 py-2">
                   <div>
                     <p className="text-[11px] text-slate-500">Sales</p>
-                    <p className="mt-0.5 truncate text-sm font-semibold">
+                    <p className="mt-0.5 truncate text-sm font-semibold text-slate-950">
                       {formatBranchCurrency(branch.sales, branch.currency)}
                     </p>
                   </div>
                   <div>
                     <p className="text-[11px] text-slate-500">Net</p>
-                    <p className="mt-0.5 truncate text-sm font-semibold">
+                    <p className="mt-0.5 truncate text-sm font-semibold text-slate-950">
                       {formatBranchCurrency(branch.sales - branch.expenses, branch.currency)}
                     </p>
                   </div>
@@ -1457,11 +1457,11 @@ function Metric({
       </CardHeader>
       <CardContent>
         <div className="min-w-0 space-y-0.5">
-          <p className="break-words text-2xl font-semibold leading-tight tracking-tight text-white">
+          <p className="break-words text-2xl font-semibold leading-tight tracking-tight !text-slate-950">
             {values[0]}
           </p>
           {values.slice(1).map((entry) => (
-            <p className="break-words text-sm font-medium leading-tight text-white/80" key={entry}>
+            <p className="break-words text-sm font-medium leading-tight !text-slate-950" key={entry}>
               {entry}
             </p>
           ))}

@@ -99,7 +99,7 @@ export function useOptimizedInventory(storeId: string | null, userId: string | n
         placeholderData: keepPreviousData,
         retry: 0, // Do not repeat a broken schema/query during startup
         retryDelay: (attempt) => Math.min(200 * 2 ** attempt, 1000), // Much faster retries
-        refetchOnMount: false,
+        refetchOnMount: true,
         refetchOnWindowFocus: false,
         refetchOnReconnect: false, // Completely cache-first
         structuralSharing: true,
@@ -144,7 +144,7 @@ export function useOptimizedSales(storeId: string | null, userId: string | null)
         placeholderData: keepPreviousData,
         retry: 1, // Single retry only
         retryDelay: (attempt) => Math.min(200 * 2 ** attempt, 1000),
-        refetchOnMount: false,
+        refetchOnMount: true,
         refetchOnWindowFocus: false,
         refetchOnReconnect: false, // Cache-first approach
         structuralSharing: true,
@@ -188,7 +188,7 @@ export function useOptimizedExpenses(storeId: string | null, userId: string | nu
         placeholderData: keepPreviousData,
         retry: 3,
         retryDelay: (attempt) => Math.min(300 * 2 ** attempt, 3000),
-        refetchOnMount: false,
+        refetchOnMount: true,
         refetchOnWindowFocus: false,
         refetchOnReconnect: true,
         structuralSharing: true,
@@ -218,7 +218,7 @@ export function useOptimizedCustomers(storeId: string | null) {
         gcTime: 1000 * 60 * 60 * 24,
         placeholderData: keepPreviousData,
         retry: 2,
-        refetchOnMount: false,
+        refetchOnMount: true,
     });
 
 }
@@ -247,7 +247,7 @@ export function useOptimizedCashTransactions(storeId: string | null, userId: str
         gcTime: 1000 * 60 * 60 * 24,
         placeholderData: keepPreviousData,
         retry: 2,
-        refetchOnMount: false,
+        refetchOnMount: true,
     });
 
 }
@@ -366,15 +366,16 @@ export function useAddSaleOptimistic() {
             }
             return result;
         },
-        onSettled: async (data, error, variables: SaleInput) => {
-            await Promise.all([
+        onSettled: (data, error, variables: SaleInput) => {
+            void Promise.all([
                 optimizedCache.invalidate(`sales:${variables.store_id}`),
                 optimizedCache.invalidate(`inventory:${variables.store_id}`),
                 optimizedCache.invalidate(`cash_transactions:${variables.store_id}`),
-            ]);
-            queryClient.refetchQueries({ queryKey: ['sales', variables.store_id], type: 'all' });
-            queryClient.refetchQueries({ queryKey: ['inventory', variables.store_id], type: 'all' });
-            queryClient.refetchQueries({ queryKey: ['cash_transactions', variables.store_id], type: 'all' });
+            ]).then(() => {
+                void queryClient.refetchQueries({ queryKey: ['sales', variables.store_id], type: 'active' });
+                void queryClient.refetchQueries({ queryKey: ['inventory', variables.store_id], type: 'active' });
+                void queryClient.refetchQueries({ queryKey: ['cash_transactions', variables.store_id], type: 'active' });
+            });
         },
     });
 }
@@ -425,15 +426,18 @@ export function useAddExpenseOptimistic() {
                 data: expense
             }]);
         },
-        onSettled: async (data, error, variables) => {
+        onSettled: (data, error, variables) => {
             if (variables?.store_id) {
-                await Promise.all([
+                void Promise.all([
                     optimizedCache.invalidate(`expenses:${variables.store_id}`),
                     optimizedCache.invalidate(`cash_transactions:${variables.store_id}`),
-                ]);
+                ]).then(() => {
+                    void queryClient.refetchQueries({ queryKey: ['expenses', variables.store_id], type: 'active' });
+                    void queryClient.refetchQueries({ queryKey: ['cash_transactions', variables.store_id], type: 'active' });
+                });
             }
-            queryClient.invalidateQueries({ queryKey: ['expenses'] });
-            queryClient.invalidateQueries({ queryKey: ['cash_transactions'] });
+            void queryClient.invalidateQueries({ queryKey: ['expenses'] });
+            void queryClient.invalidateQueries({ queryKey: ['cash_transactions'] });
         },
     });
 }

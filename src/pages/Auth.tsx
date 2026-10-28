@@ -181,9 +181,7 @@ const Auth = () => {
         });
       } else {
         if (signInData.user?.id) {
-          void (supabase.from("profiles") as any)
-            .update({ last_login: new Date().toISOString() })
-            .eq("user_id", signInData.user.id);
+          void supabase.rpc("sync_authenticated_identity" as any);
         }
         // Keep the compact authenticating state until the direct destination
         // is resolved; the POS itself is the success confirmation.

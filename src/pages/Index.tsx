@@ -41,6 +41,7 @@ import { useToast } from "@/hooks/use-toast";
 import { StockItem, SaleItem, ExpenseItem, Product, Category, Staff } from "@/types";
 
 import { useOptimizedInventory, useOptimizedSales, useOptimizedExpenses, useOptimizedCashTransactions } from "@/hooks/useOptimizedData";
+import { usePaymentAccountBalances, usePaymentAccounts } from "@/hooks/usePaymentAccounts";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRealtimeSync, useVisibilityRefresh } from "@/hooks/useRealtimeSync";
 import { optimizedCache } from "@/lib/optimizedCache";
@@ -281,6 +282,8 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
   const { data: rawSales, isLoading: salesLoading } = useOptimizedSales(currentStoreId, userId);
   const { data: rawExpenses, isLoading: expensesLoading } = useOptimizedExpenses(currentStoreId, userId);
   const { data: rawCashTransactions } = useOptimizedCashTransactions(currentStoreId, userId);
+  const paymentAccountsQuery = usePaymentAccounts(currentStoreId, true);
+  const paymentBalancesQuery = usePaymentAccountBalances(currentStoreId);
 
   // Real-time sync: listen for changes from other devices (non-blocking)
   useRealtimeSync(currentStoreId);
@@ -383,6 +386,16 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
   const availableCashSource = useMemo(() => {
     if (!userId || !currentStoreId || !rawCashTransactions) return 0;
 
+    const configuredCashAccounts = (paymentAccountsQuery.data ?? []).filter(
+      (account) => String(account.provider_type).toLowerCase() === "cash",
+    );
+    if (configuredCashAccounts.length > 0) {
+      return configuredCashAccounts.reduce(
+        (sum, account) => sum + (Number(paymentBalancesQuery.data?.[account.id]) || 0),
+        0,
+      );
+    }
+
     const totalCash = dedupeRowsById(rawCashTransactions as Array<{ id?: string; type?: string; amount?: number }>).reduce((sum, tx) => {
       const t = String((tx as { type?: string })?.type ?? "").toLowerCase();
       const amount = Number((tx as { amount?: number })?.amount) || 0;
@@ -394,7 +407,7 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
     }, 0);
 
     return Math.max(0, totalCash);
-  }, [rawCashTransactions, userId, currentStoreId]);
+  }, [rawCashTransactions, userId, currentStoreId, paymentAccountsQuery.data, paymentBalancesQuery.data]);
 
   useEffect(() => {
     setStockData(stockDataSource);
@@ -607,6 +620,10 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
           // server-side persona checks above have completed.
           setRoleResolved(true);
 
+          // Repair/sync the durable profile identity on every restored session
+          // so names do not disappear after a refresh or token renewal.
+          void supabase.rpc("sync_authenticated_identity" as any);
+
           // Apply saved theme (light or dark)
           const key = localStorage.getItem('brec_current_store') ? `app_theme_${localStorage.getItem('brec_current_store')}` : 'app_theme';
           applyTheme(localStorage.getItem(key) || 'light');
@@ -716,16 +733,27 @@ const Index = ({ posStoreId, branchName }: { posStoreId?: string; branchName?: s
 
   // Refresh data from Supabase
   const refreshData = useCallback(async () => {
-    if (currentStoreId) {
-      await Promise.all(["inventory", "sales", "expenses", "cash_transactions"].map((table) =>
-        optimizedCache.invalidate(`${table}:${currentStoreId}`),
-      ));
-    }
-    queryClient.invalidateQueries({ queryKey: ['inventory'] });
-    queryClient.invalidateQueries({ queryKey: ['sales'] });
-    queryClient.invalidateQueries({ queryKey: ['expenses'] });
-    queryClient.invalidateQueries({ queryKey: ['cash_transactions'] });
-  }, [queryClient]);
+    if (!currentStoreId) return;
+    const tables = ["inventory", "sales", "expenses", "cash_transactions"] as const;
+    await Promise.all(tables.map((table) => optimizedCache.invalidate(`${table}:${currentStoreId}`)));
+    await Promise.all(tables.map((table) => queryClient.refetchQueries({
+      queryKey: [table, currentStoreId],
+      type: "all",
+    })));
+    await Promise.all([
+      queryClient.refetchQueries({ queryKey: ["branch_payment_accounts", currentStoreId], type: "all" }),
+      queryClient.refetchQueries({ queryKey: ["payment_account_balances", currentStoreId], type: "all" }),
+      queryClient.refetchQueries({ queryKey: ["payment_account_ledger", currentStoreId], type: "all" }),
+    ]);
+  }, [currentStoreId, queryClient]);
+
+  // The main data hooks stay mounted while POS pages change, so page changes do
+  // not naturally trigger React Query's mount refetch. Refresh the branch data
+  // when a page is opened to guarantee cards and lists reflect recent actions.
+  useEffect(() => {
+    if (!currentStoreId || !userId) return;
+    void refreshData();
+  }, [currentPage, currentStoreId, userId, refreshData]);
 
   // Load data from Supabase when userId or currentStoreId changes
   useEffect(() => {

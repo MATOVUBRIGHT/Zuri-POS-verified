@@ -30,6 +30,9 @@ type Reseller = {
   notes: string | null;
   status: "pending" | "active" | "inactive";
   is_application: boolean;
+  reseller_branch_store_id: string | null;
+  reseller_branch_country: string | null;
+  commission_percent: number;
   created_at: string;
 };
 
@@ -40,9 +43,11 @@ type ResellerSale = {
   date_of_sale: string;
   total_amount: number;
   paid_in_cash: boolean | null;
-  products: Product[];
+  products: ResellerProduct[];
   created_at: string;
 };
+
+type ResellerProduct = Product & { commissionPercent?: number };
 
 type ResellerPayment = {
   id: string;
@@ -75,6 +80,7 @@ type ResellerForm = {
   email: string;
   phone: string;
   notes: string;
+  commission_percent: string;
 };
 
 type ResellerDataErrors = {
@@ -102,7 +108,7 @@ const getErrorMessage = (error: unknown) => {
   return String(error);
 };
 
-const emptyForm: ResellerForm = { name: "", business_name: "", email: "", phone: "", notes: "" };
+const emptyForm: ResellerForm = { name: "", business_name: "", email: "", phone: "", notes: "", commission_percent: "0" };
 
 const htmlEscapes: Record<string, string> = {
     "&": "&amp;",
@@ -190,6 +196,7 @@ interface ResellerDetailViewProps {
   importAction: ReactNode;
   onSupply: () => void;
   onRecordPayment: () => void;
+  onScheduleSettlement: () => void;
   onAddCommission: () => void;
   onPaymentHistory: () => void;
   onPrintInvoice: (sale: ResellerSale) => void;
@@ -221,6 +228,7 @@ const ResellerDetailView = ({
   importAction,
   onSupply,
   onRecordPayment,
+  onScheduleSettlement,
   onAddCommission,
   onPaymentHistory,
   onPrintInvoice,
@@ -230,9 +238,22 @@ const ResellerDetailView = ({
   updatingCommissionId,
   pdfBusyId,
 }: ResellerDetailViewProps) => {
+  const [salesSearch, setSalesSearch] = useState("");
   const suppliedTotal = sales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
   const latestSupply = salesUnavailable ? null : sales.reduce<ResellerSale | null>((latest, sale) =>
     !latest || new Date(sale.date_of_sale).getTime() > new Date(latest.date_of_sale).getTime() ? sale : latest, null);
+  const latestSuppliedItems = latestSupply?.products.map((product) => `${product.productName} × ${product.quantity}`).join(", ");
+  const filteredSales = useMemo(() => {
+    const query = salesSearch.trim().toLowerCase();
+    if (!query) return sales;
+    return sales.filter((sale) => [
+      sale.id,
+      sale.customer_name,
+      sale.date_of_sale,
+      sale.paid_in_cash ? "paid" : "credit",
+      ...sale.products.flatMap((product) => [product.productName, String(product.quantity), String(product.sellingPrice)]),
+    ].join(" ").toLowerCase().includes(query));
+  }, [sales, salesSearch]);
 
   return (
     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pb-5">
@@ -284,17 +305,31 @@ const ResellerDetailView = ({
           <p className="mt-2 text-lg font-semibold">{commissionsUnavailable ? "Unavailable" : fmtCurrency(unpaidCommission)}</p>
           <p className="mt-1 text-xs text-muted-foreground">Tracked separately from supply balance</p>
         </div>
+        <div className="rounded-lg border bg-card p-4 xl:col-span-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Last supplied items</p>
+          <p className="mt-2 text-sm font-semibold">{salesUnavailable ? "Unavailable" : latestSuppliedItems || "No supplies yet"}</p>
+          {latestSupply && <p className="mt-1 text-xs text-muted-foreground">Supplied on {displayDate(latestSupply.date_of_sale)} · {fmtCurrency(latestSupply.total_amount)}</p>}
+        </div>
       </section>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.9fr)]">
         <section className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-base font-semibold">Stock supply history</h3>
-              <p className="text-sm text-muted-foreground">Invoices and delivery documents for supplied goods.</p>
+              <h3 className="text-base font-semibold">Sales &amp; stock supply history</h3>
+              <p className="text-sm text-muted-foreground">Search every supplied item, quantity, price, payment, and document.</p>
             </div>
-            {!balanceUnavailable && balance > 0 && <Button type="button" variant="outline" size="sm" onClick={onRecordPayment}><CreditCard className="mr-2 h-4 w-4" />Record payment</Button>}
+            <div className="flex flex-wrap items-center gap-2">
+              {!balanceUnavailable && balance > 0 && <><Button type="button" variant="outline" size="sm" onClick={onRecordPayment}><CreditCard className="mr-2 h-4 w-4" />Record payment</Button><Button type="button" variant="outline" size="sm" onClick={onScheduleSettlement}><Truck className="mr-2 h-4 w-4" />Schedule settlement</Button></>}
+              <Button type="button" size="sm" onClick={onSupply} disabled={reseller.status !== "active"}><Package className="mr-2 h-4 w-4" />New sale</Button>
+            </div>
           </div>
+          {!salesUnavailable && sales.length > 0 && (
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={salesSearch} onChange={(event) => setSalesSearch(event.target.value)} placeholder="Search item, customer, invoice, date, price, or payment..." className="h-10 pl-9" autoComplete="off" aria-label="Search reseller sales" />
+            </div>
+          )}
           {loading ? (
             <div role="status" className="flex items-center justify-center gap-2 rounded-lg border bg-card py-12 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Loading supply history…</div>
           ) : salesUnavailable ? (
@@ -308,9 +343,13 @@ const ResellerDetailView = ({
               <p className="mt-1 text-sm text-muted-foreground">Record a supply to create its invoice and delivery note.</p>
               <Button type="button" className="mt-4" onClick={onSupply} disabled={reseller.status !== "active"}><Package className="mr-2 h-4 w-4" />Stock supply</Button>
             </div>
+          ) : filteredSales.length === 0 ? (
+            <div className="rounded-lg border border-dashed bg-card px-5 py-10 text-center text-sm text-muted-foreground">
+              No sales match “{salesSearch}”. Try an item name, invoice number, date, or payment status.
+            </div>
           ) : (
             <div className="space-y-3">
-              {sales.map((sale) => (
+              {filteredSales.map((sale) => (
                 <article key={sale.id} className="rounded-lg border bg-card p-4">
                   <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
                     <div className="min-w-0">
@@ -327,7 +366,10 @@ const ResellerDetailView = ({
                           </div>
                         )) : <span className="text-sm text-muted-foreground">Items not listed</span>}
                       </div>
-                      <p className="mt-3 font-semibold">{fmtCurrency(sale.total_amount)}</p>
+                      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                        <p className="font-semibold">Total: {fmtCurrency(sale.total_amount)}</p>
+                        <p className="text-muted-foreground">{sale.products.reduce((sum, product) => sum + Number(product.quantity || 0), 0)} units supplied</p>
+                      </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap gap-2">
                       <Button type="button" size="sm" variant="outline" onClick={() => onPrintInvoice(sale)}><Printer className="mr-1.5 h-3.5 w-3.5" />Invoice</Button>
@@ -413,6 +455,7 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
   const [saleDialogOpen, setSaleDialogOpen] = useState(false);
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [paymentHistoryDialogOpen, setPaymentHistoryDialogOpen] = useState(false);
+  const [settlementDialogOpen, setSettlementDialogOpen] = useState(false);
   const [commissionDialogOpen, setCommissionDialogOpen] = useState(false);
   const [deliveryPreviewSale, setDeliveryPreviewSale] = useState<ResellerSale | null>(null);
   const [activeResellerId, setActiveResellerId] = useState<string | null>(null);
@@ -423,12 +466,17 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
   const [selectedReseller, setSelectedReseller] = useState<Reseller | null>(null);
   const [productId, setProductId] = useState("");
   const [productSearchTerm, setProductSearchTerm] = useState("");
-  const [cart, setCart] = useState<Product[]>([]);
-  const [salePayment, setSalePayment] = useState<"paid" | "credit">("paid");
+  const [cart, setCart] = useState<ResellerProduct[]>([]);
+  const [saleType, setSaleType] = useState<"retail" | "wholesale">("retail");
+  const [salePayment, setSalePayment] = useState<"paid" | "partial" | "credit">("paid");
+  const [salePaymentMethod, setSalePaymentMethod] = useState("Cash");
+  const [saleAmountReceived, setSaleAmountReceived] = useState("");
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
   const [paymentNotes, setPaymentNotes] = useState("");
+  const [settlementDate, setSettlementDate] = useState(new Date().toISOString().slice(0, 10));
+  const [settlementNotes, setSettlementNotes] = useState("");
   const [commissionAmount, setCommissionAmount] = useState("");
   const [commissionDate, setCommissionDate] = useState(new Date().toISOString().slice(0, 10));
   const [commissionDescription, setCommissionDescription] = useState("");
@@ -451,7 +499,7 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
     try {
       const [resellersResult, salesResult, paymentsResult, commissionsResult] = await Promise.all([
         supabase.from("resellers")
-          .select("id, store_id, name, business_name, email, phone, notes, status, is_application, created_at")
+          .select("id, store_id, name, business_name, email, phone, notes, status, is_application, reseller_branch_store_id, reseller_branch_country, commission_percent, created_at")
           .eq("store_id", currentStoreId)
           .order("created_at", { ascending: false }),
         supabase.from("sales")
@@ -498,7 +546,7 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
       if (queryErrorMessages.length) {
         toast({ title: "Could not load reseller data", description: queryErrorMessages.join("; "), variant: "destructive" });
       }
-      if (!resellersResult.error) setResellers((resellersResult.data || []) as Reseller[]);
+      if (!resellersResult.error) setResellers((resellersResult.data || []) as unknown as Reseller[]);
       if (!salesResult.error) {
         setSales((salesResult.data || []).map((sale) => ({
           ...sale,
@@ -592,11 +640,13 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
   const availableStockItems = useMemo(() => {
     const query = productSearchTerm.trim().toLowerCase();
     return stockData.filter((item) => {
-      const available = Math.max(0, Number(item.quantity || 0) - Number(item.damaged_quantity || 0));
+      const availableUnits = Math.max(0, Number(item.quantity || 0) - Number(item.damaged_quantity || 0));
+      const itemsPerSachet = Number(item.items_per_sachet || 1);
+      const available = saleType === "wholesale" ? Math.floor(availableUnits / itemsPerSachet) : availableUnits;
       const name = String(item.productName || item.product_name || "");
       return available > 0 && (!query || name.toLowerCase().includes(query));
     });
-  }, [stockData, productSearchTerm]);
+  }, [saleType, stockData, productSearchTerm]);
 
   const openCreateDialog = (isApplication: boolean) => {
     setApplicationMode(isApplication);
@@ -636,6 +686,7 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
         email: form.email.trim() || null,
         phone: form.phone.trim() || null,
         notes: form.notes.trim() || null,
+        commission_percent: Math.min(100, Math.max(0, Number(form.commission_percent) || 0)),
         status: applicationMode ? "pending" : "active",
         is_application: applicationMode,
       });
@@ -678,7 +729,10 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
       toast({ title: "Item unavailable", description: "Choose an item from the current in-stock list and try again.", variant: "destructive" });
       return;
     }
-    const availableQuantity = Number(item.quantity || 0) - Number(item.damaged_quantity || 0);
+    const availableUnits = Math.max(0, Number(item.quantity || 0) - Number(item.damaged_quantity || 0));
+    const itemsPerSachet = Number(item.items_per_sachet || 1);
+    const sellType = saleType === "wholesale" ? "sachet" : "item";
+    const availableQuantity = sellType === "sachet" ? Math.floor(availableUnits / itemsPerSachet) : availableUnits;
     if (availableQuantity <= 0) {
       toast({ title: "No sellable stock", description: `${item.productName || item.product_name} has no undamaged stock available.`, variant: "destructive" });
       setProductId("");
@@ -689,29 +743,44 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
       toast({ title: "Already added", description: "Change the quantity on the existing line item." });
       return;
     }
-    const sellingPrice = Number(item.retail_price || item.retailPrice || 0);
+    const sellingPrice = saleType === "wholesale"
+      ? Number(item.wholesale_price || 0)
+      : Number(item.retail_price || item.retailPrice || 0);
+    if (sellingPrice <= 0) {
+      toast({ title: "Selling price not set", description: `Set a ${saleType} price for ${item.productName || item.product_name} before selling.`, variant: "destructive" });
+      return;
+    }
     setCart((items) => [...items, {
       id: item.id,
       productName: item.productName || item.product_name,
       quantity: 1,
       sellingPrice,
-      sellType: "item",
+      sellType,
+      itemsPerSachet,
       cost_per_unit: Number(item.cost_per_unit || item.costPerUnit || 0),
-      items_per_sachet: Number(item.items_per_sachet || 1),
+      items_per_sachet: itemsPerSachet,
+      commissionPercent: Number((selectedReseller?.commission_percent ?? 0)),
     }]);
     setProductId("");
   };
 
-  const updateCartLine = (id: string, updates: Partial<Product>) => {
+  const updateCartLine = (id: string, updates: Partial<ResellerProduct>) => {
     setCart((items) => items.map((item) => item.id === id ? { ...item, ...updates } : item));
   };
 
   const total = useMemo(() => cart.reduce((sum, item) => sum + item.quantity * item.sellingPrice, 0), [cart]);
+  const commissionTotal = useMemo(() => cart.reduce((sum, item) => {
+    const lineTotal = Number(item.quantity || 0) * Number(item.sellingPrice || 0);
+    return sum + lineTotal * Math.min(100, Math.max(0, Number(item.commissionPercent || 0))) / 100;
+  }, 0), [cart]);
 
   const openSaleDialog = (reseller: Reseller) => {
     setSelectedReseller(reseller);
     setCart([]);
     setSalePayment("paid");
+    setSalePaymentMethod("Cash");
+    setSaleAmountReceived("");
+    setSaleType("retail");
     setProductId("");
     setProductSearchTerm("");
     setSaleDialogOpen(true);
@@ -724,6 +793,35 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
     setPaymentDate(new Date().toISOString().slice(0, 10));
     setPaymentNotes("");
     setPaymentDialogOpen(true);
+  };
+
+  const openSettlementDialog = (reseller: Reseller) => {
+    setSelectedReseller(reseller);
+    setSettlementDate(new Date().toISOString().slice(0, 10));
+    setSettlementNotes("");
+    setSettlementDialogOpen(true);
+  };
+
+  const scheduleSettlement = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedReseller || !currentStoreId || !user) return;
+    const amount = balancesByReseller.get(selectedReseller.id) || 0;
+    if (amount <= 0) {
+      toast({ title: "Nothing to schedule", description: "This reseller has no outstanding supply balance." });
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await (supabase.from("reseller_settlement_schedules" as any) as any).insert({
+        store_id: currentStoreId, reseller_id: selectedReseller.id, amount,
+        scheduled_for: settlementDate, notes: settlementNotes.trim() || null, created_by: user.id,
+      });
+      if (error) throw error;
+      toast({ title: "Settlement scheduled", description: `${fmtCurrency(amount)} expected from ${selectedReseller.business_name || selectedReseller.name} on ${displayDate(settlementDate)}.` });
+      setSettlementDialogOpen(false);
+    } catch (error) {
+      toast({ title: "Could not schedule settlement", description: getErrorMessage(error), variant: "destructive" });
+    } finally { setSaving(false); }
   };
 
   const savePayment = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -866,9 +964,18 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
       toast({ title: "Add sale items", description: "Add at least one item with a valid selling price.", variant: "destructive" });
       return;
     }
+    const receivedAmount = salePayment === "paid" ? total : salePayment === "partial" ? Number(saleAmountReceived) : 0;
+    if (salePayment === "partial" && (!Number.isFinite(receivedAmount) || receivedAmount <= 0 || receivedAmount >= total)) {
+      toast({ title: "Enter a partial payment", description: "Partial payment must be greater than zero and less than the sale total.", variant: "destructive" });
+      return;
+    }
     const invalidItem = cart.find((product) => {
       const stock = stockData.find((item) => item.id === product.id);
-      return !stock || product.quantity <= 0 || product.quantity > Number(stock.quantity || 0) - Number(stock.damaged_quantity || 0);
+      const availableUnits = Number(stock?.quantity || 0) - Number(stock?.damaged_quantity || 0);
+      const maxQuantity = product.sellType === "sachet"
+        ? Math.floor(availableUnits / Number(stock?.items_per_sachet || 1))
+        : availableUnits;
+      return !stock || product.quantity <= 0 || product.quantity > maxQuantity;
     });
     if (invalidItem) {
       toast({ title: "Check item quantity", description: `${invalidItem.productName} is not available in the requested quantity.`, variant: "destructive" });
@@ -878,7 +985,7 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
     submittingRef.current = true;
     setSaving(true);
     try {
-      await addSaleMutation.mutateAsync({
+      const saleResult = await addSaleMutation.mutateAsync({
         customerName: selectedReseller.business_name || selectedReseller.name,
         dateOfSale: new Date().toISOString().slice(0, 10),
         totalAmount: total,
@@ -888,11 +995,51 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
         user_id: user.id,
         reseller_id: selectedReseller.id,
         payment_details: salePayment === "paid"
-          ? { paymentProviderType: "cash", paymentMethod: "Cash" }
-          : null,
+          ? { paymentProviderType: salePaymentMethod === "Cash" ? "cash" : "noncash", paymentMethod: salePaymentMethod, amountReceived: total }
+          : { paymentProviderType: "credit", paymentMethod: salePayment === "partial" ? salePaymentMethod : "Reseller account", amountReceived: receivedAmount, balanceDue: total - receivedAmount },
         inventorySnapshot: stockData,
       });
-      toast({ title: "Stock supply recorded", description: "Inventory was updated once. Invoice and delivery note are ready." });
+
+      const saleId = (saleResult as { saleId?: string } | null)?.saleId;
+      if (saleId && commissionTotal > 0) {
+        const commissionRows = cart
+          .map((item) => ({
+            store_id: currentStoreId,
+            reseller_id: selectedReseller.id,
+            recorded_by: user.id,
+            sale_id: saleId,
+            amount: Number((item.quantity * item.sellingPrice * Number(item.commissionPercent || 0) / 100).toFixed(2)),
+            commission_percent: Number(item.commissionPercent || 0),
+            commission_date: new Date().toISOString().slice(0, 10),
+            description: `${item.productName} · ${item.quantity} unit${item.quantity === 1 ? "" : "s"}`,
+            source: "reseller_sale",
+            status: "unpaid",
+          }))
+          .filter((row) => row.amount > 0);
+        if (commissionRows.length) {
+          const { error: commissionError } = await (supabase.from("reseller_commissions" as any) as any).insert(commissionRows);
+          if (commissionError) throw commissionError;
+        }
+      }
+      if (receivedAmount > 0 && salePayment !== "paid") {
+        const { error: paymentError } = await supabase.from("reseller_payments").insert({
+          store_id: currentStoreId, reseller_id: selectedReseller.id, recorded_by: user.id,
+          amount: receivedAmount, payment_method: salePaymentMethod, paid_at: new Date().toISOString().slice(0, 10),
+          notes: saleId ? `Received with supply ${saleId}` : "Received with reseller supply",
+        });
+        if (paymentError) throw paymentError;
+      }
+      if (saleId) {
+        const { error: notificationError } = await supabase.rpc("notify_reseller_sale" as any, {
+          p_sale_id: saleId,
+          p_store_id: currentStoreId,
+          p_reseller_name: selectedReseller.business_name || selectedReseller.name,
+          p_commission_amount: commissionTotal,
+          p_payment_status: salePayment === "paid" ? `paid by ${salePaymentMethod}` : salePayment === "partial" ? `partially received (${fmtCurrency(receivedAmount)})` : "credit",
+        } as any);
+        if (notificationError) console.warn("Reseller notification was not sent:", notificationError);
+      }
+      toast({ title: "Reseller sale recorded", description: `Inventory reduced. Commission earned: ${fmtCurrency(commissionTotal)}. ${salePayment === "paid" ? "Payment received." : `Balance due: ${fmtCurrency(total - receivedAmount)}.`}` });
       setSaleDialogOpen(false);
       await loadData();
     } catch (error) {
@@ -1152,6 +1299,7 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
           }
           onSupply={() => openSaleDialog(detailReseller)}
           onRecordPayment={() => openPaymentDialog(detailReseller)}
+          onScheduleSettlement={() => openSettlementDialog(detailReseller)}
           onAddCommission={() => openCommissionDialog(detailReseller)}
           onPaymentHistory={() => { setSelectedReseller(detailReseller); setPaymentHistoryDialogOpen(true); }}
           onPrintInvoice={(sale) => printDocument("Invoice", detailReseller, sale)}
@@ -1249,6 +1397,7 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
                         <Badge variant={reseller.status === "active" ? "default" : reseller.status === "pending" ? "secondary" : "outline"}>{reseller.status}</Badge>
                         {reseller.is_application && <Badge variant="outline">Application</Badge>}
                       </div>
+                      {reseller.reseller_branch_store_id && <p className="mt-1 text-xs font-medium text-primary">Receiving branch · {reseller.reseller_branch_country || "Country not set"}</p>}
                       <p className="mt-0.5 break-words text-sm text-muted-foreground">
                         {reseller.business_name ? reseller.name : "Contact"}
                         {reseller.phone ? ` · ${reseller.phone}` : ""}
@@ -1289,7 +1438,10 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
               <div className="space-y-1"><Label htmlFor="reseller-email" className="text-xs">Email</Label><Input id="reseller-email" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></div>
               <div className="space-y-1"><Label htmlFor="reseller-phone" className="text-xs">Phone</Label><Input id="reseller-phone" type="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /></div>
             </div>
-            <div className="space-y-1"><Label htmlFor="reseller-notes" className="text-xs">Notes</Label><Textarea id="reseller-notes" rows={2} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1"><Label htmlFor="reseller-commission-percent" className="text-xs">Default commission (%)</Label><Input id="reseller-commission-percent" type="number" min="0" max="100" step="0.01" value={form.commission_percent} onChange={(event) => setForm({ ...form, commission_percent: event.target.value })} /><p className="text-xs text-muted-foreground">Applied to new supplied items; each item can be changed.</p></div>
+              <div className="space-y-1"><Label htmlFor="reseller-notes" className="text-xs">Notes</Label><Textarea id="reseller-notes" rows={2} value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></div>
+            </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={saving}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{applicationMode ? "Submit application" : "Save reseller"}</Button>
@@ -1355,6 +1507,18 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save payment
               </Button>
             </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={settlementDialogOpen} onOpenChange={setSettlementDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><Truck className="h-5 w-5" />Schedule branch settlement</DialogTitle><DialogDescription>Claim the expected supply balance and schedule the amount due to the branch.</DialogDescription></DialogHeader>
+          <form onSubmit={(event) => void scheduleSettlement(event)} className="space-y-4">
+            <div className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2"><span className="text-sm text-muted-foreground">Expected amount</span><strong>{selectedReseller ? fmtCurrency(balancesByReseller.get(selectedReseller.id) || 0) : fmtCurrency(0)}</strong></div>
+            <div className="space-y-1"><Label htmlFor="reseller-settlement-date">Scheduled date</Label><Input id="reseller-settlement-date" type="date" required value={settlementDate} onChange={(event) => setSettlementDate(event.target.value)} /></div>
+            <div className="space-y-1"><Label htmlFor="reseller-settlement-notes">Notes</Label><Textarea id="reseller-settlement-notes" rows={3} value={settlementNotes} onChange={(event) => setSettlementNotes(event.target.value)} placeholder="Optional branch payment reference" /></div>
+            <DialogFooter><Button type="button" variant="outline" onClick={() => setSettlementDialogOpen(false)}>Cancel</Button><Button type="submit" disabled={saving}>Schedule to branch</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
@@ -1497,10 +1661,24 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
       <Dialog open={saleDialogOpen} onOpenChange={setSaleDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Package className="h-5 w-5" />Record stock supply</DialogTitle>
-            <DialogDescription>Add the items supplied to {selectedReseller?.business_name || selectedReseller?.name}. Saving records a sale, reduces store inventory, and makes an invoice and delivery note available.</DialogDescription>
+            <DialogTitle className="flex items-center gap-2"><Package className="h-5 w-5" />Make reseller sale</DialogTitle>
+            <DialogDescription>Select stocked items just like the main POS. The sale reduces inventory and is linked to {selectedReseller?.business_name || selectedReseller?.name}.</DialogDescription>
           </DialogHeader>
           <form onSubmit={(event) => void saveSale(event)} className="space-y-4">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Select value={saleType} onValueChange={(value) => { setSaleType(value as "retail" | "wholesale"); setCart([]); setProductId(""); }}>
+                <SelectTrigger className="w-full sm:w-40" aria-label="Sale type"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="retail">Retail · item</SelectItem>
+                  <SelectItem value="wholesale">Wholesale · sachet</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="relative min-w-0 flex-1">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input value={productSearchTerm} onChange={(event) => setProductSearchTerm(event.target.value)} placeholder="Search stocked items..." autoComplete="off" className="pl-9" aria-label="Search available inventory items" />
+              </div>
+            </div>
+            {/* Search results below use the same stocked inventory snapshot as POS. */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -1527,25 +1705,29 @@ const Resellers = ({ currentStoreId, stockData }: ResellersProps) => {
             <div className="max-h-64 space-y-2 overflow-y-auto rounded-lg border p-2">
               {!cart.length ? <p className="py-8 text-center text-sm text-muted-foreground">Items sold will appear here.</p> : cart.map((product) => {
                 const stock = stockData.find((item) => item.id === product.id);
-                const maxQuantity = Math.max(0, Number(stock?.quantity || 0) - Number(stock?.damaged_quantity || 0));
+                const availableUnits = Math.max(0, Number(stock?.quantity || 0) - Number(stock?.damaged_quantity || 0));
+                const maxQuantity = product.sellType === "sachet" ? Math.floor(availableUnits / Number(stock?.items_per_sachet || 1)) : availableUnits;
                 return (
-                  <div key={product.id} className="grid grid-cols-[minmax(0,1fr)_86px_120px_auto] items-center gap-2 rounded-md bg-muted/40 p-2">
-                    <div className="min-w-0"><p className="truncate text-sm font-medium">{product.productName}</p><p className="text-xs text-muted-foreground">{maxQuantity} available</p></div>
+                  <div key={product.id} className="grid grid-cols-[minmax(0,1fr)_72px_104px_76px_auto] items-center gap-2 rounded-md bg-muted/40 p-2">
+                    <div className="min-w-0"><p className="truncate text-sm font-medium">{product.productName}</p><p className="text-xs text-muted-foreground">{maxQuantity} {product.sellType === "sachet" ? "sachets" : "items"} available · {product.sellType === "sachet" ? "Wholesale" : "Retail"}</p></div>
                     <Input aria-label={`${product.productName} quantity`} type="number" min="1" max={maxQuantity} value={product.quantity} onChange={(event) => updateCartLine(product.id, { quantity: Math.max(1, Math.min(maxQuantity || 1, Number(event.target.value) || 1)) })} />
                     <Input aria-label={`${product.productName} unit price`} type="number" min="0" step="0.01" value={product.sellingPrice} onChange={(event) => updateCartLine(product.id, { sellingPrice: Math.max(0, Number(event.target.value) || 0) })} />
+                    <Input aria-label={`${product.productName} commission percent`} type="number" min="0" max="100" step="0.01" value={product.commissionPercent ?? 0} onChange={(event) => updateCartLine(product.id, { commissionPercent: Math.min(100, Math.max(0, Number(event.target.value) || 0)) })} />
                     <Button type="button" variant="ghost" size="icon" aria-label={`Remove ${product.productName}`} onClick={() => setCart((items) => items.filter((item) => item.id !== product.id))}><X className="h-4 w-4" /></Button>
                   </div>
                 );
               })}
-              {cart.length > 0 && <div className="px-2 text-right text-xs text-muted-foreground">Columns: item, quantity, unit price</div>}
+              {cart.length > 0 && <div className="px-2 text-right text-xs text-muted-foreground">Columns: item, quantity, unit price, commission % · {saleType === "wholesale" ? "wholesale sachet sale" : "retail item sale"}</div>}
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1"><Label className="text-xs">Payment status</Label><Select value={salePayment} onValueChange={(value) => setSalePayment(value as "paid" | "credit")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="paid">Paid in cash</SelectItem><SelectItem value="credit">Credit / unpaid</SelectItem></SelectContent></Select></div>
-              <div className="flex items-end justify-between rounded-lg bg-muted/50 px-3 py-2"><span className="text-sm text-muted-foreground">Sale total</span><strong className="text-lg">{fmtCurrency(total)}</strong></div>
+              <div className="space-y-1"><Label className="text-xs">Payment status</Label><Select value={salePayment} onValueChange={(value) => setSalePayment(value as "paid" | "partial" | "credit")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="paid">Paid now</SelectItem><SelectItem value="partial">Part payment</SelectItem><SelectItem value="credit">Credit / reseller account</SelectItem></SelectContent></Select></div>
+              <div className="space-y-1"><Label className="text-xs">Payment method</Label><Select value={salePaymentMethod} onValueChange={setSalePaymentMethod}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Cash">Cash</SelectItem><SelectItem value="Bank Transfer">Bank transfer</SelectItem><SelectItem value="Mobile Money">Mobile money</SelectItem><SelectItem value="Cheque">Cheque</SelectItem><SelectItem value="Reseller account">Reseller account</SelectItem></SelectContent></Select></div>
             </div>
+            {salePayment === "partial" && <div className="space-y-1"><Label htmlFor="reseller-sale-payment">Amount received now</Label><Input id="reseller-sale-payment" type="number" min="0.01" max={Math.max(0, total - 0.01)} step="0.01" value={saleAmountReceived} onChange={(event) => setSaleAmountReceived(event.target.value)} /></div>}
+            <div className="grid gap-3 sm:grid-cols-2"><div className="flex items-end justify-between rounded-lg bg-muted/50 px-3 py-2"><span className="text-sm text-muted-foreground">Sale total</span><strong className="text-lg">{fmtCurrency(total)}</strong></div><div className="flex items-end justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-900"><span className="text-sm">Commission earned</span><strong>{fmtCurrency(commissionTotal)}</strong></div></div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setSaleDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={saving || cart.length === 0}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Record stock supply</Button>
+              <Button type="submit" disabled={saving || cart.length === 0}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Complete sale</Button>
             </DialogFooter>
           </form>
         </DialogContent>

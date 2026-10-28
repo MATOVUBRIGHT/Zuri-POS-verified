@@ -33,6 +33,7 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
   const [isLinkDialogOpen, setIsLinkDialogOpen] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [newStoreName, setNewStoreName] = useState("");
+  const [newStoreCountry, setNewStoreCountry] = useState("Uganda");
   const [newStorePassword, setNewStorePassword] = useState("");
   const [showNewStorePassword, setShowNewStorePassword] = useState(false);
   const [linkStoreId, setLinkStoreId] = useState("");
@@ -288,7 +289,7 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
 
       const { data, error } = await supabase
         .from("stores")
-        .insert({ store_name: newStoreName.trim(), user_id: user.id })
+        .insert({ store_name: newStoreName.trim(), country_of_origin: newStoreCountry.trim() || "Uganda", user_id: user.id } as any)
         .select()
         .single();
 
@@ -572,6 +573,11 @@ const StoresContent = ({ currentStoreId, onStoreChange }: StoresProps) => {
                     value={newStoreName}
                     onChange={(e) => setNewStoreName(e.target.value)}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="storeCountry">Branch country of origin</Label>
+                  <Input id="storeCountry" placeholder="Uganda" value={newStoreCountry} onChange={(e) => setNewStoreCountry(e.target.value)} />
+                  <p className="text-xs text-muted-foreground">Used when this branch supplies stock to another branch.</p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="storePassword" className="flex items-center gap-1.5">

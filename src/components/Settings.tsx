@@ -55,6 +55,13 @@ const Settings = ({ stockData, salesData, expensesData, currentStoreId, onDataIm
     const [clearDataOpen, setClearDataOpen] = useState(false);
   const [colorScheme, setColorScheme] = useState('default');
   const [currency, setCurrency] = useState('UGX');
+  // The classic interface remains the default. The enhanced styling is an
+  // explicit opt-in and is scoped to the active branch on this device.
+  const [modernUiEnabled, setModernUiEnabled] = useState(() => {
+    try {
+      return localStorage.getItem(currentStoreId ? `app_modern_ui_${currentStoreId}` : 'app_modern_ui') === 'true';
+    } catch { return false; }
+  });
   const [isDark, setIsDark] = useState(() => {
     try {
       const key = currentStoreId ? `app_theme_${currentStoreId}` : 'app_theme';
@@ -110,6 +117,25 @@ const Settings = ({ stockData, salesData, expensesData, currentStoreId, onDataIm
       fetchFinanceSettings();
     }
   }, [currentStoreId]);
+
+  useEffect(() => {
+    const enabled = (() => {
+      try { return localStorage.getItem(currentStoreId ? `app_modern_ui_${currentStoreId}` : 'app_modern_ui') === 'true'; }
+      catch { return false; }
+    })();
+    setModernUiEnabled(enabled);
+    document.documentElement.classList.toggle('modern-ui', enabled);
+  }, [currentStoreId]);
+
+  const toggleModernUi = () => {
+    const next = !modernUiEnabled;
+    setModernUiEnabled(next);
+    document.documentElement.classList.toggle('modern-ui', next);
+    try {
+      localStorage.setItem(currentStoreId ? `app_modern_ui_${currentStoreId}` : 'app_modern_ui', String(next));
+    } catch {}
+    window.dispatchEvent(new Event('modern-ui-change'));
+  };
 
   const fetchFinanceSettings = async () => {
     try {
@@ -1228,6 +1254,20 @@ const Settings = ({ stockData, salesData, expensesData, currentStoreId, onDataIm
                       {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                     </Button>
                   </div>
+                </div>
+              </div>
+
+              <div className="border-t pt-5">
+                <h4 className="mb-1 font-medium">Interface style</h4>
+                <p className="mb-3 text-sm text-muted-foreground">Keep the classic layout, or opt in to the enhanced card and popup styling across the app.</p>
+                <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-4">
+                  <div>
+                    <div className="font-medium">Enhanced interface</div>
+                    <div className="text-xs text-muted-foreground">{modernUiEnabled ? 'Enabled for this branch' : 'Classic look is active'}</div>
+                  </div>
+                  <Button type="button" variant={modernUiEnabled ? 'default' : 'outline'} size="sm" onClick={toggleModernUi}>
+                    {modernUiEnabled ? 'Turn off' : 'Turn on'}
+                  </Button>
                 </div>
               </div>
 

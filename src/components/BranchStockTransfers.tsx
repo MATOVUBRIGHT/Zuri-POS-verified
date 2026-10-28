@@ -30,11 +30,11 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { fmtCurrency } from "@/lib/currency";
+import { fmtCurrency, fmtCurrencyFor } from "@/lib/currency";
 import { supabase } from "@/integrations/supabase/client";
 import type { StockTransferItem, StockTransferRequest } from "@/types";
 
-type Branch = { id: string; store_name: string; user_id: string };
+type Branch = { id: string; store_name: string; user_id: string; currency?: string | null };
 type InventoryChoice = {
   id: string;
   product_name: string;
@@ -49,7 +49,18 @@ type InventoryChoice = {
 };
 
 type TransferRecord = StockTransferRequest & {
-  items: StockTransferItem[];
+  items: TransferItem[];
+};
+type TransferItem = StockTransferItem & {
+  received_amount?: number | null;
+  received_currency?: string | null;
+  received_cost_per_unit?: number | null;
+  branch_currency?: string | null;
+  branch_cost_per_unit?: number | null;
+  exchange_rate?: number | null;
+  exchange_rate_source?: string | null;
+  reviewed_retail_price?: number | null;
+  reviewed_wholesale_price?: number | null;
 };
 
 const describeSupabaseError = (error: unknown, fallback: string) => {
@@ -116,6 +127,12 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
   const [selectedQuantities, setSelectedQuantities] = useState<Record<string, number>>({});
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
+  const [reviewing, setReviewing] = useState<{ transfer: TransferRecord; item: TransferItem } | null>(null);
+  const [reviewRetailPrice, setReviewRetailPrice] = useState("");
+  const [reviewWholesalePrice, setReviewWholesalePrice] = useState("");
+  const [reviewRate, setReviewRate] = useState("1");
+  const [reviewRateSource, setReviewRateSource] = useState<"custom" | "online">("custom");
+  const [rateLoading, setRateLoading] = useState(false);
 
   const loadWorkspace = useCallback(async () => {
     if (!currentStoreId) {
@@ -133,7 +150,7 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
     try {
       const { data: store, error: storeError } = await supabase
         .from("stores")
-        .select("id, store_name, user_id")
+        .select("id, store_name, user_id, currency")
         .eq("id", currentStoreId)
         .maybeSingle();
       if (storeError) throw storeError;
@@ -146,7 +163,7 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
       setCanManageTransfers(Boolean(canManage));
 
       const [branchResult, inventoryResult] = await Promise.all([
-        supabase.from("stores").select("id, store_name, user_id").eq("user_id", store.user_id).order("store_name"),
+        supabase.from("stores").select("id, store_name, user_id, currency").eq("user_id", store.user_id).order("store_name"),
         supabase.from("inventory")
           .select("id, product_name, category, size, barcode, quantity, cost_per_unit, retail_price, wholesale_price")
           .eq("store_id", currentStoreId)
@@ -205,6 +222,7 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
   }, [loadWorkspace]);
 
   const branchById = useMemo(() => new Map(branches.map((branch) => [branch.id, branch])), [branches]);
+  const currentCurrency = String(branchById.get(currentStoreId || "")?.currency || "UGX").toUpperCase();
   const eligibleDestinations = useMemo(
     () => branches.filter((branch) => branch.user_id === ownerId && branch.id !== currentStoreId),
     [branches, currentStoreId, ownerId],
@@ -252,6 +270,86 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
     () => inventory.filter((item) => selectedQuantities[item.id] > 0),
     [inventory, selectedQuantities],
   );
+
+  const reviewSourceCurrency = reviewing
+    ? String(branchById.get(reviewing.transfer.from_store_id)?.currency || "UGX").toUpperCase()
+    : currentCurrency;
+  const reviewBranchCurrency = reviewing
+    ? String(branchById.get(reviewing.transfer.to_store_id)?.currency || currentCurrency).toUpperCase()
+    : currentCurrency;
+  const reviewConvertedCost = (Number(reviewing?.item.cost_per_unit || 0) || 0) * (Number(reviewRate) || 0);
+
+  const openReview = (transfer: TransferRecord, item: TransferItem) => {
+    const sourceCurrency = String(branchById.get(transfer.from_store_id)?.currency || "UGX").toUpperCase();
+    const branchCurrency = String(branchById.get(transfer.to_store_id)?.currency || currentCurrency).toUpperCase();
+    const branchRetail = item.reviewed_retail_price ?? 0;
+    const branchWholesale = item.reviewed_wholesale_price ?? 0;
+    setReviewing({ transfer, item });
+    setReviewRetailPrice(String(branchRetail));
+    setReviewWholesalePrice(String(branchWholesale));
+    setReviewRate(sourceCurrency === branchCurrency ? "1" : String(item.exchange_rate || ""));
+    setReviewRateSource((item.exchange_rate_source === "online" ? "online" : "custom"));
+  };
+
+  const loadOnlineRate = async () => {
+    if (!reviewing || reviewSourceCurrency === reviewBranchCurrency) {
+      setReviewRate("1");
+      return;
+    }
+    setRateLoading(true);
+    try {
+      const response = await fetch(`https://api.frankfurter.app/latest?from=${encodeURIComponent(reviewSourceCurrency)}&to=${encodeURIComponent(reviewBranchCurrency)}`);
+      if (!response.ok) throw new Error("Online exchange rate unavailable");
+      const result = await response.json() as { rates?: Record<string, number> };
+      const rate = Number(result.rates?.[reviewBranchCurrency]);
+      if (!Number.isFinite(rate) || rate <= 0) throw new Error("No online rate was returned for these currencies");
+      setReviewRate(String(rate));
+      setReviewRateSource("online");
+      toast({ title: "Online rate loaded", description: `1 ${reviewSourceCurrency} = ${rate} ${reviewBranchCurrency}` });
+    } catch (error) {
+      toast({ title: "Could not load online rate", description: error instanceof Error ? error.message : "Enter a custom rate instead.", variant: "destructive" });
+    } finally {
+      setRateLoading(false);
+    }
+  };
+
+  const approveReviewedItem = async () => {
+    if (!reviewing) return;
+    const retail = Number(reviewRetailPrice);
+    const wholesale = Number(reviewWholesalePrice);
+    const rate = Number(reviewRate);
+    if (!Number.isFinite(retail) || retail < 0 || !Number.isFinite(wholesale) || wholesale < 0) {
+      toast({ title: "Set both selling prices", description: "Enter the receiving branch retail and wholesale prices before approving.", variant: "destructive" });
+      return;
+    }
+    if (!Number.isFinite(rate) || rate <= 0) {
+      toast({ title: "Enter a valid exchange rate", description: `The rate must convert ${reviewSourceCurrency} into ${reviewBranchCurrency}.`, variant: "destructive" });
+      return;
+    }
+    setDecidingId(reviewing.item.id);
+    try {
+      const { error } = await supabase.rpc("review_stock_transfer_item" as any, {
+        p_item_id: reviewing.item.id,
+        p_decision: "approved",
+        p_retail_price: retail,
+        p_wholesale_price: wholesale,
+        p_exchange_rate: rate,
+        p_rate_source: reviewRateSource,
+      });
+      if (error) throw error;
+      toast({ title: "Item approved", description: `${reviewing.item.product_name} was converted to ${reviewBranchCurrency} and added to inventory.` });
+      setReviewing(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["inventory", reviewing.transfer.from_store_id] }),
+        queryClient.invalidateQueries({ queryKey: ["inventory", reviewing.transfer.to_store_id] }),
+      ]);
+      await loadWorkspace();
+    } catch (error) {
+      toast({ title: "Approval failed", description: describeSupabaseError(error, "Refresh the transfer and try again."), variant: "destructive" });
+    } finally {
+      setDecidingId(null);
+    }
+  };
 
   const openRequestDialog = () => {
     if (!canManageTransfers) return;
@@ -321,6 +419,10 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
   };
 
   const decideItem = async (transfer: TransferRecord, item: StockTransferItem, decision: "approved" | "rejected") => {
+    if (decision === "approved") {
+      openReview(transfer, item as TransferItem);
+      return;
+    }
     setDecidingId(item.id);
     try {
       const { error } = await supabase.rpc("decide_stock_transfer_item", {
@@ -329,21 +431,13 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
       });
       if (error) throw error;
       toast({
-        title: decision === "approved" ? "Item approved" : "Item rejected",
-        description: decision === "approved"
-          ? "Inventory moved atomically from the sending branch to this branch."
-          : "Rejected items do not change either branch's stock.",
+        title: "Item rejected",
+        description: "Rejected items do not change either branch's stock.",
       });
-      if (decision === "approved") {
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ["inventory", transfer.from_store_id] }),
-          queryClient.invalidateQueries({ queryKey: ["inventory", transfer.to_store_id] }),
-        ]);
-      }
       await loadWorkspace();
     } catch (error) {
       toast({
-        title: decision === "approved" ? "Approval failed" : "Rejection failed",
+        title: "Rejection failed",
         description: describeSupabaseError(error, "Refresh the transfer and try again."),
         variant: "destructive",
       });
@@ -457,6 +551,11 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
           <p className="mt-1 text-sm text-muted-foreground">
             Request a branch-to-branch stock movement. Pending items do not reduce stock and nothing is recorded as a sale.
           </p>
+          {/*
+                                  </p>
+                                  {item.status === "approved" && item.received_currency && item.branch_currency && item.received_currency !== item.branch_currency && <p className="mt-1 text-xs text-muted-foreground">Received {fmtCurrencyFor(Number(item.received_amount ?? item.cost_per_unit), item.received_currency)} · converted at {Number(item.exchange_rate || 0)} to {item.branch_currency} ({item.exchange_rate_source || "custom"})</p>}
+                                </div>
+          */}
         </div>
         <div className="flex gap-2">
           <Button type="button" variant="outline" onClick={() => void loadWorkspace()} disabled={loading} aria-label="Refresh stock transfers">
@@ -643,6 +742,47 @@ const BranchStockTransfers = ({ currentStoreId }: { currentStoreId: string | nul
           )}
         </ScrollArea>
       </section>
+
+      <Dialog open={Boolean(reviewing)} onOpenChange={(open) => !open && setReviewing(null)}>
+        <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-lg overflow-y-auto !pb-10">
+          <DialogHeader>
+            <DialogTitle>Review and complete item</DialogTitle>
+            <DialogDescription>
+              Set the receiving branch selling prices before this item is added to inventory. The original received currency stays on the transfer record.
+            </DialogDescription>
+          </DialogHeader>
+          {reviewing && (
+            <div className="space-y-4 py-2">
+              <div className="rounded-lg border bg-muted/30 p-3">
+                <p className="font-semibold">{reviewing.item.product_name}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{reviewing.item.quantity} unit{Number(reviewing.item.quantity) === 1 ? "" : "s"} · {reviewSourceCurrency} received → {reviewBranchCurrency} branch currency</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-md border bg-background p-2.5"><p className="text-[11px] text-muted-foreground">Received cost / unit</p><p className="font-semibold tabular-nums">{fmtCurrencyFor(Number(reviewing.item.received_amount ?? reviewing.item.cost_per_unit), reviewSourceCurrency)}</p></div>
+                  <div className="rounded-md border bg-background p-2.5"><p className="text-[11px] text-muted-foreground">Converted cost / unit</p><p className="font-semibold tabular-nums">{fmtCurrencyFor((Number(reviewing.item.received_amount ?? reviewing.item.cost_per_unit) || 0) * (Number(reviewRate) || 0), reviewBranchCurrency)}</p></div>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5"><Label htmlFor="transfer-retail-price">Retail price ({reviewBranchCurrency}) *</Label><Input id="transfer-retail-price" type="number" min="0" step="0.01" inputMode="decimal" value={reviewRetailPrice} onChange={(event) => setReviewRetailPrice(event.target.value)} placeholder="0.00" /></div>
+                <div className="space-y-1.5"><Label htmlFor="transfer-wholesale-price">Wholesale price ({reviewBranchCurrency}) *</Label><Input id="transfer-wholesale-price" type="number" min="0" step="0.01" inputMode="decimal" value={reviewWholesalePrice} onChange={(event) => setReviewWholesalePrice(event.target.value)} placeholder="0.00" /></div>
+              </div>
+              <div className="space-y-2 rounded-lg border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2"><div><Label>Currency conversion</Label><p className="text-xs text-muted-foreground">1 {reviewSourceCurrency} equals how many {reviewBranchCurrency}?</p></div>{reviewSourceCurrency === reviewBranchCurrency && <Badge variant="secondary">Same currency</Badge>}</div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" size="sm" variant={reviewRateSource === "custom" ? "default" : "outline"} onClick={() => setReviewRateSource("custom")}>Custom rate</Button>
+                  <Button type="button" size="sm" variant={reviewRateSource === "online" ? "default" : "outline"} onClick={() => { setReviewRateSource("online"); void loadOnlineRate(); }} disabled={rateLoading || reviewSourceCurrency === reviewBranchCurrency}>{rateLoading ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}Online rate</Button>
+                </div>
+                <div className="space-y-1.5"><Label htmlFor="transfer-exchange-rate">Exchange rate *</Label><Input id="transfer-exchange-rate" type="number" min="0.000001" step="0.000001" inputMode="decimal" value={reviewRate} onChange={(event) => { setReviewRate(event.target.value); setReviewRateSource("custom"); }} disabled={reviewSourceCurrency === reviewBranchCurrency} /><p className="text-xs text-muted-foreground">Rate source: {reviewRateSource === "online" ? "online reference" : "custom entered rate"}. You can replace an online rate.</p></div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setReviewing(null)}>Cancel</Button>
+            <Button type="button" onClick={() => void approveReviewedItem()} disabled={!reviewing || decidingId === reviewing?.item.id || rateLoading}>
+              {decidingId === reviewing?.item.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}Approve and complete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[92vh] max-w-3xl overflow-hidden">

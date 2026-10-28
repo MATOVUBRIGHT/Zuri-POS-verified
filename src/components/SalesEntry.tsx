@@ -13,7 +13,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { Search, Plus, Trash2, ShoppingCart, DollarSign, Printer, Loader2, User, CreditCard, Banknote, Receipt, Camera, History, Clock, Check, X, Undo2, Split } from "lucide-react";
+import { Search, Plus, Trash2, ShoppingCart, DollarSign, Printer, Loader2, User, CreditCard, Banknote, Receipt, Camera, History, Clock, Check, X, Undo2, Split, Smartphone, Landmark, WalletCards } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useDebounce } from "@/hooks/use-debounce";
 import { usePaymentAccounts } from "@/hooks/usePaymentAccounts";
@@ -33,6 +33,13 @@ import { useAddSaleOptimistic } from "@/hooks/useOptimizedData";
 import { insertRowsWithSchemaFallback, updateByIdWithSchemaFallback } from "@/lib/supabaseSchemaFallback";
 import { useQueryClient } from "@tanstack/react-query";
 const SalesReport = lazy(() => import("@/components/SalesReport"));
+
+const PaymentAccountIcon = ({ provider }: { provider: string }) => {
+  const value = provider.toLowerCase();
+  const Icon = value.includes("cash") ? Banknote : value.includes("mobile") || value.includes("mtn") || value.includes("airtel") ? Smartphone : value.includes("bank") || value.includes("transfer") ? Landmark : value.includes("card") || value.includes("visa") ? CreditCard : WalletCards;
+  const tone = value.includes("cash") ? "text-emerald-600" : value.includes("mobile") || value.includes("mtn") || value.includes("airtel") ? "text-amber-600" : value.includes("bank") || value.includes("transfer") ? "text-sky-600" : value.includes("card") || value.includes("visa") ? "text-violet-600" : "text-primary";
+  return <Icon className={cn("h-5 w-5", tone)} />;
+};
 import PendingSales, { loadPending } from "@/components/PendingSales";
 import { getCurrencySymbol } from "@/lib/currency";
 import { usePosStore } from "@/store/usePosStore";
@@ -178,6 +185,7 @@ const SalesEntry = ({ stockData, onAddSale, currentStoreId }: SalesEntryProps) =
   const paymentAccounts = (paymentAccountsQuery.data ?? []) as unknown as Array<{ id: string; name: string; provider_type: string; account_number: string | null }>;
   const [selectedPaymentAccountId, setSelectedPaymentAccountId] = useState<string | null>(null);
   const [splitPaymentOpen, setSplitPaymentOpen] = useState(false);
+  const [paymentAccountPickerOpen, setPaymentAccountPickerOpen] = useState(false);
   const [splitPayments, setSplitPayments] = useState<Array<{ accountId: string; amount: string }>>([])
   // Edited separately from `splitPayments` so closing the dialog cannot silently
   // drop an already-applied split.
@@ -2236,7 +2244,17 @@ setSelectedPaymentMethodId(matchingMethod?.id || null);
                               </SelectTrigger>
                               <SelectContent>
                                 {paymentAccounts.map(account => (
-                                  <SelectItem key={account.id} value={account.id} className={account.provider_type.toLowerCase() === "cash" ? "font-semibold text-success" : ""}>
+                                  <SelectItem
+                                    key={account.id}
+                                    value={account.id}
+                                    className={cn(
+                                      "my-0.5 min-h-10 rounded-md border py-2 pl-10 pr-3 text-sm shadow-sm focus:text-foreground",
+                                      account.provider_type.toLowerCase() === "cash" && "border-emerald-200 bg-emerald-50/80 focus:bg-emerald-100",
+                                      (account.provider_type.toLowerCase().includes("mobile") || account.provider_type.toLowerCase().includes("mtn") || account.provider_type.toLowerCase().includes("airtel")) && "border-amber-200 bg-amber-50/80 focus:bg-amber-100",
+                                      (account.provider_type.toLowerCase().includes("bank") || account.provider_type.toLowerCase().includes("transfer")) && "border-sky-200 bg-sky-50/80 focus:bg-sky-100",
+                                      (account.provider_type.toLowerCase().includes("card") || account.provider_type.toLowerCase().includes("visa")) && "border-violet-200 bg-violet-50/80 focus:bg-violet-100",
+                                    )}
+                                  >
                                     <span className="capitalize">{account.name} · {account.provider_type.replace(/_/g, " ")}</span>
                                   </SelectItem>
                                 ))}
@@ -2622,7 +2640,7 @@ setSelectedPaymentMethodId(matchingMethod?.id || null);
                             }
                           }}
                         >
-                          {selectedPaymentIsCash ? <Banknote className="h-4 w-4" /> : <CreditCard className="h-4 w-4" />}
+                          <PaymentAccountIcon provider={selectedPaymentAccount?.provider_type || selectedPaymentMethodName} />
                           <span className="text-xs">{selectedPaymentMethodName}</span>
                         </Button>
                         <Button

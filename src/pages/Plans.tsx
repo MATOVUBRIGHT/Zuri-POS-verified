@@ -190,8 +190,8 @@ const Plans = ({ embedded = false, onClose }: PlansProps) => {
 
   if (isPending) {
     return (
-      <div className="min-h-screen overflow-y-auto bg-background px-4 py-8 pb-20 sm:px-6">
-        <div className="max-w-md w-full space-y-4">
+      <div className="flex min-h-screen items-center justify-center overflow-y-auto bg-background px-4 py-8 pb-20 sm:px-6">
+        <div className="w-full max-w-md space-y-4">
           <Card className="border-slate-200 text-center shadow-none">
             <CardHeader>
               <div className="mx-auto bg-warning/10 w-16 h-16 rounded-full flex items-center justify-center mb-4">

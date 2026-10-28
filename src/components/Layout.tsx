@@ -87,6 +87,26 @@ interface LayoutProps {
   userId?: string | null;
 }
 
+const LiveClock = () => {
+  const [currentTime, setCurrentTime] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <>
+      <span className="text-sm font-mono font-medium text-foreground">
+        {currentTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
+      </span>
+      <span className="text-sm text-muted-foreground">
+        {currentTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+      </span>
+    </>
+  );
+};
+
 const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId, onRefresh, onOpenCashManagement, userRole = "owner", allowedPages, dataLoading, executiveMode = false, onReturnToExecutive, branchName, userId }: LayoutProps) => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -123,7 +143,6 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
     try { const key = currentStoreId ? `app_theme_${currentStoreId}` : 'app_theme'; localStorage.setItem(key, next ? 'dark' : 'light'); } catch {}
   };
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [currentTime, setCurrentTime] = useState(new Date());
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const { toast } = useToast();
@@ -360,12 +379,6 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
     }
   };
 
-  // Update time every second
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
   // Track online/offline status
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -512,23 +525,6 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
     return true;
       });
 
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true
-    });
-  };
-
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric'
-    });
-  };
-
   // One nav renderer shared by the desktop rail and the mobile overlay, so the
   // two can never drift apart.
   const renderNavItems = (isOverlay: boolean) =>
@@ -594,10 +590,9 @@ const Layout = ({ children, currentPage, onPageChange, stockData, currentStoreId
             <div className="hidden lg:flex items-center gap-3 ml-4 text-foreground">
               <div className="flex items-center gap-1.5 bg-foreground/10 backdrop-blur-sm px-3 py-1 rounded-full">
                 <Clock size={14} className="text-foreground" />
-                <span className="text-sm font-mono font-medium text-foreground">{formatTime(currentTime)}</span>
+                <LiveClock />
               </div>
               <span className="text-muted-foreground">•</span>
-              <span className="text-sm text-muted-foreground">{formatDate(currentTime)}</span>
             </div>
           </div>
 

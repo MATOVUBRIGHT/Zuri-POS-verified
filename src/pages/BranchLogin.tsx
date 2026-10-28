@@ -152,6 +152,7 @@ export default function BranchLogin() {
         return;
       }
 
+      void supabase.rpc("sync_authenticated_identity" as any);
       navigate(`/pos/${data.store_id}`, { replace: true });
     } catch {
       setError(loginMessage("unavailable"));

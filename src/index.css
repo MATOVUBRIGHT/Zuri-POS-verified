@@ -316,6 +316,43 @@ body {
 /* Shared product chrome: quiet surfaces, clear hierarchy, and consistent
    affordances across every existing page and dialog. */
 @layer components {
+  /* Optional visual refresh. Classic styling remains unchanged unless the
+     user explicitly enables Enhanced interface in Settings. */
+  .modern-ui .rounded-2xl.bg-card,
+  .modern-ui .rounded-xl.bg-card,
+  .modern-ui [data-radix-dialog-content] {
+    border-radius: 1rem;
+    box-shadow: 0 12px 30px hsl(220 35% 20% / 0.08);
+  }
+
+  .modern-ui .page-header {
+    border-radius: 1rem;
+    box-shadow: 0 8px 24px hsl(220 35% 20% / 0.06);
+  }
+
+  /* Returns & Damaged keeps the classic page language unless Enhanced
+     interface is explicitly enabled. These scoped rules neutralise the
+     enhanced page's decorative treatment without changing its controls or
+     layout. */
+  html:not(.modern-ui) .returns-damaged-page .rounded-2xl,
+  html:not(.modern-ui) .returns-damaged-page .rounded-xl {
+    border-radius: 0.5rem;
+  }
+
+  html:not(.modern-ui) .returns-damaged-page .bg-white {
+    background-color: hsl(var(--card));
+  }
+
+  html:not(.modern-ui) .returns-damaged-page .bg-slate-50\/60,
+  html:not(.modern-ui) .returns-damaged-page .bg-slate-50 {
+    background-color: transparent;
+  }
+
+  html:not(.modern-ui) .returns-damaged-page .shadow-sm,
+  html:not(.modern-ui) .returns-damaged-page .shadow-md {
+    box-shadow: none;
+  }
+
   .rounded-xl.bg-card,
   .rounded-lg.bg-card,
   .rounded-md.bg-card {

@@ -30,6 +30,9 @@ interface Supplier {
   notes: string | null;
   total_supplied: number;
   outstanding_balance: number;
+  supplier_branch_name: string | null;
+  supplier_branch_store_id: string | null;
+  supplier_branch_country: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -133,7 +136,7 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
 
       let res = await supabase
         .from("suppliers")
-        .select("id, store_id, name, phone, email, address, company, notes, total_supplied, outstanding_balance, created_at, updated_at")
+        .select("id, store_id, name, phone, email, address, company, notes, total_supplied, outstanding_balance, supplier_branch_name, supplier_branch_store_id, supplier_branch_country, created_at, updated_at")
         .eq("store_id", storeId)
         .order("name", { ascending: true });
 
@@ -597,6 +600,8 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
     const searched = suppliers.filter(s =>
       s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (s.company || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.supplier_branch_name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.supplier_branch_country || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
       (s.phone || "").includes(searchTerm)
     );
     const filtered = cardFilter === "with_balance"
@@ -737,6 +742,7 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {[supplier.company, supplier.phone, supplier.email].filter(Boolean).join(" · ")}
                     </p>
+                    {supplier.supplier_branch_name && <p className="mt-1 text-xs font-medium text-primary">Supplied by {supplier.supplier_branch_name}{supplier.supplier_branch_country ? ` · ${supplier.supplier_branch_country}` : ""}</p>}
                     <div className="flex gap-4 mt-1">
                       <div className="text-[10px] text-muted-foreground">
                         Supplied: <span className="font-bold text-emerald-600">{fmtCurrency(supplier.total_supplied)}</span>
@@ -799,6 +805,7 @@ const Suppliers = ({ currentStoreId, onOpenReports, onOpenScheduledPayments }: S
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3 text-sm">
                 {viewSupplier.company && <div><p className="text-xs text-muted-foreground">Company</p><p className="font-medium">{viewSupplier.company}</p></div>}
+                {viewSupplier.supplier_branch_name && <div><p className="text-xs text-muted-foreground">Branch supply origin</p><p className="font-medium">{viewSupplier.supplier_branch_name}{viewSupplier.supplier_branch_country ? ` · ${viewSupplier.supplier_branch_country}` : ""}</p></div>}
                 {viewSupplier.phone && <div><p className="text-xs text-muted-foreground">Phone</p><p className="font-medium">{viewSupplier.phone}</p></div>}
                 {viewSupplier.email && <div><p className="text-xs text-muted-foreground">Email</p><p className="font-medium">{viewSupplier.email}</p></div>}
                 {viewSupplier.address && <div><p className="text-xs text-muted-foreground">Address</p><p className="font-medium">{viewSupplier.address}</p></div>}
